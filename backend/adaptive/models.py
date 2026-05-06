@@ -35,6 +35,12 @@ class TaskStatus(str, Enum):
     done = "done"
     skipped = "skipped"
     partial = "partial"
+    rescheduled = "rescheduled"
+
+
+class SkipType(str, Enum):
+    skip_today = "skip_today"
+    skip_permanently = "skip_permanently"
 
 
 class TaskDifficulty(str, Enum):
@@ -55,6 +61,9 @@ class MemoryKey(str, Enum):
     goal = "goal"
     constraint = "constraint"
     preference = "preference"
+    pattern = "pattern"
+    schedule_habit = "schedule_habit"
+    deadline = "deadline"
     context = "context"
     milestone = "milestone"
 
@@ -77,6 +86,8 @@ class UserPreferences(BaseModel):
     id: UUID = Field(...)
     user_id: UUID
     max_tasks_per_day: int = 4
+    auto_reduce_enabled: bool = True
+    reduced_until: date | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -113,6 +124,10 @@ class TaskRow(BaseModel):
     order_index: int = 0
     duration_minutes: int | None = None
     detail_json: dict | None = None
+    rescheduled_from: date | None = None
+    struggling: bool = False
+    skip_reason: str | None = None
+    skipped_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -139,6 +154,9 @@ class MemoryRow(BaseModel):
     key: MemoryKey
     value: str
     source: str = "chat_extraction"
+    importance: int = 0
+    confidence: float = 0.5
+    user_visible: bool = True
     goal_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
@@ -164,3 +182,22 @@ class AdjustmentSuggestionRow(BaseModel):
     status: AdjustmentStatus = AdjustmentStatus.pending
     created_at: datetime
     resolved_at: datetime | None = None
+
+
+class DailySummaryRow(BaseModel):
+    id: UUID = Field(...)
+    user_id: UUID
+    date: date
+    summary_text: str = ""
+    stats_json: dict = {}
+    created_at: datetime
+
+
+class EpisodicMemoryRow(BaseModel):
+    id: UUID = Field(...)
+    user_id: UUID
+    type: str  # episode | pattern | insight
+    content: str
+    context_json: dict | None = None
+    learned_rule: str | None = None
+    created_at: datetime

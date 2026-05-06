@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
 from uuid import UUID
 
 from backend.adaptive.db import adaptive_store
-from backend.adaptive.models import EventType, TaskDifficulty, TaskRow, TaskStatus
+from backend.adaptive.models import EventType, TaskRow, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 
 class AdjusterService:
@@ -72,69 +75,81 @@ class AdjusterService:
             )
         return updated
 
-    # ── 3. "I'm busy" → move all today's tasks to next day ──────────────────
+    # ── 3. "I'm busy" → keep 1 task per plan, reschedule the rest ────────────
 
     def handle_busy(self, user_id: UUID) -> list[TaskRow]:
         """
-        User says they're busy — reschedule ALL pending/partial tasks
-        due today (or overdue) to tomorrow.
+        User says they're busy — keep 1 task per active plan (lowest order_index),
+        reschedule all other pending/partial tasks to next working day,
+        then run overload check on the target day.
         """
+        from backend.adaptive.services.adaptation_rules import get_next_working_day, check_overload
+
         today = date.today()
-        tomorrow = today + timedelta(days=1)
         due_tasks = adaptive_store.get_due_tasks(user_id, today)
 
-        rescheduled = []
-        for task in due_tasks:
-            updated = adaptive_store.reschedule_task(task.id, tomorrow)
+        # Group by plan
+        by_plan: dict[UUID, list[TaskRow]] = {}
+        for t in due_tasks:
+            by_plan.setdefault(t.plan_id, []).append(t)
+
+        # For each plan, keep 1 task (lowest order_index), reschedule the rest
+        kept_ids: set[UUID] = set()
+        to_reschedule: list[TaskRow] = []
+
+        for plan_id, tasks in by_plan.items():
+            tasks.sort(key=lambda t: t.order_index)
+            kept_ids.add(tasks[0].id)  # keep the first task
+            to_reschedule.extend(tasks[1:])
+
+        # If a plan has no due tasks today, skip it (nothing to keep)
+        rescheduled: list[TaskRow] = []
+        for task in to_reschedule:
+            plan = adaptive_store.get_plan(task.plan_id)
+            working_days = None
+            if plan and plan.schedule_prefs:
+                working_days = plan.schedule_prefs.get("working_days")
+            next_day = get_next_working_day(today, working_days)
+
+            try:
+                updated = adaptive_store.set_task_rescheduled(task.id, next_day, today)
+            except Exception:
+                updated = adaptive_store.reschedule_task(task.id, next_day)
+
+            adaptive_store.record_event(
+                user_id=user_id,
+                task_id=task.id,
+                plan_id=task.plan_id,
+                event_type=EventType.rescheduled,
+                feedback_text="rescheduled due to busy day",
+            )
             if updated:
-                adaptive_store.record_event(
-                    user_id=user_id,
-                    task_id=task.id,
-                    plan_id=task.plan_id,
-                    event_type=EventType.rescheduled,
-                    feedback_text="rescheduled due to busy day",
-                )
                 rescheduled.append(updated)
 
-        return rescheduled
+        # Run overload check on the next working day
+        if rescheduled:
+            try:
+                next_day = get_next_working_day(today)
+                check_overload(user_id, next_day)
+            except Exception as e:
+                logger.warning("Overload check after busy day failed: %s", e)
 
-    # ── 4. Too many tasks → reschedule overflow ─────────────────────────────
+        # Create episodic memory for busy day
+        try:
+            adaptive_store.create_episodic_memory(
+                user_id=user_id,
+                type="episode",
+                content=f"User marked busy day — kept {len(kept_ids)} tasks, rescheduled {len(rescheduled)} to next working day",
+                context_json={"kept": len(kept_ids), "rescheduled": len(rescheduled)},
+            )
+        except Exception:
+            pass
+
+        return rescheduled
 
     def reschedule_overflow(self, user_id: UUID) -> list[TaskRow]:
-        """
-        If user has more due tasks than max_tasks_per_day,
-        keep the top N (by scheduler priority) and push the rest to tomorrow.
-        """
-        today = date.today()
-        tomorrow = today + timedelta(days=1)
-        prefs = adaptive_store.ensure_preferences(user_id)
-        max_tasks = prefs.max_tasks_per_day
-
-        due_tasks = adaptive_store.get_due_tasks(user_id, today)
-
-        if len(due_tasks) <= max_tasks:
-            return []  # no overflow
-
-        # Use scheduler to pick which tasks to keep
-        from backend.adaptive.services.scheduler import scheduler_service
-        scheduled = scheduler_service.get_today_tasks(user_id, today)
-        kept_ids = {t.id for t in scheduled["tasks"]}
-
-        overflow = [t for t in due_tasks if t.id not in kept_ids]
-        rescheduled = []
-        for task in overflow:
-            updated = adaptive_store.reschedule_task(task.id, tomorrow)
-            if updated:
-                adaptive_store.record_event(
-                    user_id=user_id,
-                    task_id=task.id,
-                    plan_id=task.plan_id,
-                    event_type=EventType.rescheduled,
-                    feedback_text="rescheduled: overflow beyond daily limit",
-                )
-                rescheduled.append(updated)
-
-        return rescheduled
+        """No-op: overflow is now handled by the adaptive scheduler."""
+        return []
 
     # ── 5. User wants more → pull next task from plan ───────────────────────
 

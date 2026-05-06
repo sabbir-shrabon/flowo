@@ -22,3 +22,18 @@ uvicorn backend.main:app --reload --port 8001
 for frontend:
 cd frontend
 npm run dev
+
+for flutter:
+cd life_agent_flutter
+flutter run -d chrome
+
+for now try this:
+.\life_agent_flutter\run_web.ps1
+
+Flutter run key commands.
+r Hot reload. 
+R Hot restart.
+h List all available interactive commands.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -9,7 +11,13 @@ from backend.routers.system import router as system_router
 from backend.adaptive.routes.router import router as adaptive_router
 
 
-app = FastAPI(title="Life Agent API", separate_input_output_schemas=False)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # No cron scheduler needed — deep review is now trigger-based (milestone + failure threshold)
+    yield
+
+
+app = FastAPI(title="Life Agent API", separate_input_output_schemas=False, lifespan=lifespan)
 
 @app.exception_handler(RuntimeError)
 async def runtime_error_handler(request: Request, exc: RuntimeError):

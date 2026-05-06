@@ -9,6 +9,8 @@ from uuid import UUID
 from backend.adaptive.models import (
     AdjustmentSuggestionRow,
     AdjustmentStatus,
+    DailySummaryRow,
+    EpisodicMemoryRow,
     EventRow,
     EventType,
     MemoryKey,
@@ -272,6 +274,104 @@ class AdaptiveStore:
         self.clear_milestone_insight_for_task(task_id)
         return self._map_task(res[1][0])
 
+    def get_tasks_by_ids(self, task_ids: list[UUID]) -> list[TaskRow]:
+        """Fetch tasks by IDs and preserve the caller's order."""
+        if not task_ids:
+            return []
+        ids_str = [str(task_id) for task_id in task_ids]
+        res = self.client.table("tasks").select().in_("id", ids_str).execute()
+        rows = res[1] if res and res[1] else []
+        by_id = {str(row.get("id")): self._map_task(row) for row in rows}
+        return [by_id[task_id] for task_id in ids_str if task_id in by_id]
+
+    def get_daily_task_batch(self, user_id: UUID, on_date: date) -> dict | None:
+        """Return the locked daily batch for a user/date, if it exists."""
+        try:
+            res = (
+                self.client.table("daily_task_batches")
+                .select()
+                .eq("user_id", str(user_id))
+                .eq("date", on_date.isoformat())
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("daily_task_batches read failed: %s", exc)
+            return None
+        if not res or not res[1]:
+            return None
+        return res[1][0]
+
+    def create_daily_task_batch(
+        self,
+        user_id: UUID,
+        on_date: date,
+        daily_limit: int,
+        task_ids: list[UUID],
+        metadata: dict | None = None,
+    ) -> dict | None:
+        """Persist the first schedule decision of the day."""
+        import json as _json
+
+        self.ensure_user(user_id)
+        data = {
+            "user_id": str(user_id),
+            "date": on_date.isoformat(),
+            "daily_limit": daily_limit,
+            "task_ids": _json.dumps([str(task_id) for task_id in task_ids]),
+            "extra_task_ids": _json.dumps([]),
+            "metadata": _json.dumps(metadata or {}),
+        }
+        try:
+            res = (
+                self.client.table("daily_task_batches")
+                .upsert(data, on_conflict="user_id,date")
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("daily_task_batches write failed: %s", exc)
+            return None
+        if not res or not res[1]:
+            return None
+        return res[1][0]
+
+    def append_daily_task_batch_tasks(
+        self,
+        user_id: UUID,
+        on_date: date,
+        extra_task_ids: list[UUID],
+    ) -> dict | None:
+        """Append manually requested extra tasks to today's locked batch."""
+        import json as _json
+
+        batch = self.get_daily_task_batch(user_id, on_date)
+        if batch is None:
+            return None
+        existing_ids = self._safe_json_list(batch.get("task_ids"))
+        existing_extra_ids = self._safe_json_list(batch.get("extra_task_ids"))
+        for task_id in [str(task_id) for task_id in extra_task_ids]:
+            if task_id not in existing_ids:
+                existing_ids.append(task_id)
+            if task_id not in existing_extra_ids:
+                existing_extra_ids.append(task_id)
+        try:
+            res = (
+                self.client.table("daily_task_batches")
+                .update({
+                    "task_ids": _json.dumps(existing_ids),
+                    "extra_task_ids": _json.dumps(existing_extra_ids),
+                })
+                .eq("user_id", str(user_id))
+                .eq("date", on_date.isoformat())
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning("daily_task_batches append failed: %s", exc)
+            return None
+        if not res or not res[1]:
+            return None
+        return res[1][0]
+
     def increment_carry_over(self, task_id: UUID) -> TaskRow | None:
         """Increment carry_over_count using a single PATCH with raw SQL expression via PostgREST."""
         # PostgREST doesn't support atomic increment directly,
@@ -416,6 +516,65 @@ class AdaptiveStore:
         if not res or not res[1]:
             return None
         return self._map_milestone(res[1][0])
+
+    def count_tasks_for_plan(self, plan_id: UUID) -> tuple[int, int]:
+        """Return (total_tasks, remaining_tasks) for a plan."""
+        res = (
+            self.client.table("tasks")
+            .select("status")
+            .eq("plan_id", str(plan_id))
+            .execute()
+        )
+        rows = res[1] if res and res[1] else []
+        total = len(rows)
+        remaining = sum(1 for r in rows if r.get("status") not in ("done", "skipped"))
+        return total, remaining
+
+    def count_tasks_batch(self, plan_ids: list[UUID]) -> dict[str, tuple[int, int]]:
+        """Return {plan_id_str: (total_tasks, remaining_tasks)} for multiple plans."""
+        if not plan_ids:
+            return {}
+        res = (
+            self.client.table("tasks")
+            .select("plan_id,status")
+            .in_("plan_id", [str(pid) for pid in plan_ids])
+            .execute()
+        )
+        rows = res[1] if res and res[1] else []
+        totals: dict[str, int] = {}
+        remaining: dict[str, int] = {}
+        for r in rows:
+            pid = r["plan_id"]
+            totals[pid] = totals.get(pid, 0) + 1
+            if r.get("status") not in ("done", "skipped"):
+                remaining[pid] = remaining.get(pid, 0) + 1
+        return {
+            pid: (totals.get(pid, 0), remaining.get(pid, 0))
+            for pid in totals
+        }
+
+    def get_plan_progress_batch(self, plan_ids: list[UUID]) -> dict[str, float]:
+        """Compute progress_pct for multiple plans in a single query. Returns {plan_id_str: pct}."""
+        if not plan_ids:
+            return {}
+        res = (
+            self.client.table("tasks")
+            .select("plan_id,status")
+            .in_("plan_id", [str(pid) for pid in plan_ids])
+            .execute()
+        )
+        rows = res[1] if res and res[1] else []
+        totals: dict[str, int] = {}
+        done: dict[str, int] = {}
+        for r in rows:
+            pid = r["plan_id"]
+            totals[pid] = totals.get(pid, 0) + 1
+            if r.get("status") == "done":
+                done[pid] = done.get(pid, 0) + 1
+        return {
+            pid: round((done.get(pid, 0) / totals[pid]) * 100, 1) if totals[pid] > 0 else 0.0
+            for pid in totals
+        }
 
     def get_tasks_for_milestone(self, user_id: UUID, milestone_id: UUID) -> list[TaskRow]:
         res = (
@@ -639,11 +798,35 @@ class AdaptiveStore:
                 pass
         return None
 
+    def _safe_json_list(self, val: any) -> list:
+        if not val:
+            return []
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            import json
+            try:
+                parsed = json.loads(val)
+                if isinstance(parsed, list):
+                    return parsed
+            except Exception:
+                pass
+        return []
+
     def _map_preferences(self, row: dict) -> UserPreferences:
+        reduced_until_val = row.get("reduced_until")
+        reduced_until = None
+        if reduced_until_val:
+            try:
+                reduced_until = datetime.fromisoformat(str(reduced_until_val)).date()
+            except Exception:
+                pass
         return UserPreferences(
             id=self._safe_uuid(row.get("id")),
             user_id=self._safe_uuid(row.get("user_id")),
             max_tasks_per_day=row.get("max_tasks_per_day", 4),
+            auto_reduce_enabled=row.get("auto_reduce_enabled", True),
+            reduced_until=reduced_until,
             created_at=self._safe_date(row.get("created_at")),
             updated_at=self._safe_date(row.get("updated_at") or row.get("created_at")),
         )
@@ -673,6 +856,24 @@ class AdaptiveStore:
             except Exception:
                 pass
 
+        # Parse rescheduled_from date
+        rescheduled_from_val = row.get("rescheduled_from")
+        rescheduled_from = None
+        if rescheduled_from_val:
+            try:
+                rescheduled_from = datetime.fromisoformat(str(rescheduled_from_val)).date()
+            except Exception:
+                pass
+
+        # Parse skipped_at datetime
+        skipped_at_val = row.get("skipped_at")
+        skipped_at = None
+        if skipped_at_val:
+            try:
+                skipped_at = datetime.fromisoformat(str(skipped_at_val).replace("Z", "+00:00"))
+            except Exception:
+                pass
+
         return TaskRow(
             id=self._safe_uuid(row.get("id")),
             plan_id=self._safe_uuid(row.get("plan_id")),
@@ -688,6 +889,10 @@ class AdaptiveStore:
             order_index=row.get("order_index", 0),
             duration_minutes=row.get("duration_minutes"),
             detail_json=self._safe_json_dict(row.get("detail_json")),
+            rescheduled_from=rescheduled_from,
+            struggling=row.get("struggling", False),
+            skip_reason=row.get("skip_reason"),
+            skipped_at=skipped_at,
             created_at=self._safe_date(row.get("created_at")),
             updated_at=self._safe_date(row.get("updated_at") or row.get("created_at")),
         )
@@ -772,6 +977,141 @@ class AdaptiveStore:
             created_at=self._safe_date(row.get("created_at")),
             resolved_at=self._safe_date(res_at) if res_at else None,
         )
+
+    # ── Daily Summaries ───────────────────────────────────────────────────────
+
+    def save_daily_summary(self, user_id: UUID, for_date: date, summary_text: str, stats_json: dict) -> DailySummaryRow:
+        """Upsert a daily summary for a user+date."""
+        import json as _json
+        self.ensure_user(user_id)
+        data = {
+            "user_id": str(user_id),
+            "date": for_date.isoformat(),
+            "summary_text": summary_text,
+            "stats_json": _json.dumps(stats_json) if isinstance(stats_json, dict) else stats_json,
+        }
+        res = self.client.table("daily_summaries").upsert(data, on_conflict="user_id,date").execute()
+        if not res or not res[1]:
+            raise RuntimeError(f"Failed to save daily summary")
+        return self._map_daily_summary(res[1][0])
+
+    def get_daily_summary(self, user_id: UUID, for_date: date) -> DailySummaryRow | None:
+        res = self.client.table("daily_summaries").select().eq("user_id", str(user_id)).eq("date", for_date.isoformat()).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_daily_summary(res[1][0])
+
+    def _map_daily_summary(self, row: dict) -> DailySummaryRow:
+        date_val = row.get("date")
+        for_date = None
+        if date_val:
+            try:
+                for_date = datetime.fromisoformat(str(date_val)).date()
+            except Exception:
+                pass
+        return DailySummaryRow(
+            id=self._safe_uuid(row.get("id")),
+            user_id=self._safe_uuid(row.get("user_id")),
+            date=for_date or date.today(),
+            summary_text=row.get("summary_text", ""),
+            stats_json=self._safe_json_dict(row.get("stats_json")) or {},
+            created_at=self._safe_date(row.get("created_at")),
+        )
+
+    # ── Episodic Memories ───────────────────────────────────────────────────
+
+    def create_episodic_memory(
+        self,
+        user_id: UUID,
+        type: str,  # episode | pattern | insight
+        content: str,
+        context_json: dict | None = None,
+        learned_rule: str | None = None,
+    ) -> EpisodicMemoryRow:
+        import json as _json
+        self.ensure_user(user_id)
+        data = {
+            "user_id": str(user_id),
+            "type": type,
+            "content": content,
+        }
+        if context_json:
+            data["context_json"] = _json.dumps(context_json) if isinstance(context_json, dict) else context_json
+        if learned_rule:
+            data["learned_rule"] = learned_rule
+        res = self.client.table("episodic_memories").insert(data).execute()
+        if not res or not res[1]:
+            raise RuntimeError(f"Failed to create episodic memory")
+        return self._map_episodic_memory(res[1][0])
+
+    def list_episodic_memories(self, user_id: UUID, limit: int = 20) -> list[EpisodicMemoryRow]:
+        res = (
+            self.client.table("episodic_memories")
+            .select()
+            .eq("user_id", str(user_id))
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [self._map_episodic_memory(row) for row in res[1]]
+
+    def _map_episodic_memory(self, row: dict) -> EpisodicMemoryRow:
+        return EpisodicMemoryRow(
+            id=self._safe_uuid(row.get("id")),
+            user_id=self._safe_uuid(row.get("user_id")),
+            type=row.get("type", "episode"),
+            content=row.get("content", ""),
+            context_json=self._safe_json_dict(row.get("context_json")),
+            learned_rule=row.get("learned_rule"),
+            created_at=self._safe_date(row.get("created_at")),
+        )
+
+    # ── Task rescheduled_from / struggling helpers ─────────────────────────
+
+    def set_task_rescheduled(self, task_id: UUID, new_date: date, original_date: date) -> TaskRow | None:
+        """Reschedule a task AND record where it was rescheduled from."""
+        res = self.client.table("tasks").update({
+            "due_date": new_date.isoformat(),
+            "status": "pending",
+            "rescheduled_from": original_date.isoformat(),
+        }).eq("id", str(task_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_task(res[1][0])
+
+    def set_task_struggling(self, task_id: UUID, struggling: bool = True) -> TaskRow | None:
+        res = self.client.table("tasks").update({
+            "struggling": struggling,
+        }).eq("id", str(task_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_task(res[1][0])
+
+    def set_task_skipped_permanently(self, task_id: UUID, reason: str | None = None) -> TaskRow | None:
+        """Mark task as permanently skipped with timestamp and optional reason."""
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        updates = {
+            "status": "skipped",
+            "skipped_at": now,
+        }
+        if reason:
+            updates["skip_reason"] = reason
+        res = self.client.table("tasks").update(updates).eq("id", str(task_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_task(res[1][0])
+
+    def get_all_active_user_ids(self) -> list[UUID]:
+        """Get all user_ids that have at least one active plan (for cron)."""
+        res = (
+            self.client.table("plans")
+            .select("user_id")
+            .in_("status", ["setup", "active"])
+            .execute()
+        )
+        if not res or not res[1]:
+            return []
+        return list(set(self._safe_uuid(row["user_id"]) for row in res[1]))
 
 
 adaptive_store = AdaptiveStore()

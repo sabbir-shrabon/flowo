@@ -21,6 +21,7 @@ Keywords: {keywords}
 Current level: {current_level}
 Total duration: {duration_days} days
 Work schedule: {schedule_type}
+Daily time commitment: {daily_minutes} minutes per day
 
 Return this JSON structure:
 {{
@@ -41,6 +42,7 @@ Rules:
 - First milestone must be achievable and confidence-building
 - Last milestone is the final goal achieved
 - Each milestone must have a clear, measurable outcome
+- With {daily_minutes} min/day, keep milestones realistic — less daily time means more days per milestone
 - Return ONLY valid JSON."""
 
 RETRY_PROMPT = """You previously failed to return valid JSON. You MUST return ONLY a raw JSON object — no markdown fences, no explanation, no extra text. Just the JSON. Try again:
@@ -148,8 +150,10 @@ async def generate(
     current_level = mem_data.get("current_level", "beginner")
 
     schedule_type = "unspecified"
+    daily_minutes = 30
     if plan.schedule_prefs and isinstance(plan.schedule_prefs, dict):
         schedule_type = plan.schedule_prefs.get("type", "unspecified")
+        daily_minutes = plan.schedule_prefs.get("daily_minutes", 30)
 
     # Build prompt
     prompt = MILESTONE_PROMPT.format(
@@ -159,6 +163,7 @@ async def generate(
         current_level=current_level,
         duration_days=plan.duration_days,
         schedule_type=schedule_type,
+        daily_minutes=daily_minutes,
     )
 
     # Call LLM (async wrapper around sync call)
@@ -175,7 +180,7 @@ async def generate(
     # Create milestone records
     created: list[MilestoneRow] = []
     for idx, ms in enumerate(milestones_data):
-        ms_status = MilestoneStatus.active if idx == 0 else MilestoneStatus.locked
+        ms_status = MilestoneStatus.active
         milestone = db.create_milestone(
             user_id=uid,
             plan_id=pid,

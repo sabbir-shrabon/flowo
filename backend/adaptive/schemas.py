@@ -16,6 +16,7 @@ from backend.adaptive.models import (
     PlanIntensity,
     PlanPriority,
     PlanStatus,
+    SkipType,
     TaskDifficulty,
     TaskStatus,
 )
@@ -26,6 +27,8 @@ from backend.adaptive.models import (
 class UserPreferencesResponse(BaseModel):
     user_id: UUID
     max_tasks_per_day: int
+    auto_reduce_enabled: bool = True
+    reduced_until: date | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -47,6 +50,9 @@ class PlanResponse(BaseModel):
     intensity: PlanIntensity
     duration_days: int | None = None
     schedule_prefs: dict | None = None
+    progress_pct: float = 0.0
+    total_tasks: int = 0
+    remaining_tasks: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -56,6 +62,14 @@ class PlanUpdateRequest(BaseModel):
     status: PlanStatus | None = None
     priority: PlanPriority | None = None
     intensity: PlanIntensity | None = None
+
+
+class AdaptPlanRequest(BaseModel):
+    duration_days: int = Field(..., ge=1, le=365, description="Number of days to complete the plan")
+    working_days: list[int] = Field(
+        ..., min_length=1, max_length=7,
+        description="Working days as integers 0=Mon … 6=Sun",
+    )
 
 
 class PlanControlRequest(BaseModel):
@@ -79,6 +93,10 @@ class TaskResponse(BaseModel):
     order_index: int = 0
     duration_minutes: int | None = None
     detail_json: dict | None = None
+    rescheduled_from: date | None = None
+    struggling: bool = False
+    skip_reason: str | None = None
+    skipped_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -96,6 +114,25 @@ class TaskUpdateRequest(BaseModel):
     feedback_text: str | None = None
 
 
+class PullExtraTasksRequest(BaseModel):
+    count: int = Field(..., ge=1, le=3)
+
+
+class DailyPlanMetadata(BaseModel):
+    id: UUID
+    title: str | None = None
+    priority: PlanPriority | None = None
+    status: PlanStatus | None = None
+
+
+class DailyMilestoneMetadata(BaseModel):
+    id: UUID
+    plan_id: UUID
+    title: str
+    status: MilestoneStatus
+    order_index: int = 0
+
+
 # ── Memory ─────────────────────────────────────────────────────────────────────
 
 class MemoryResponse(BaseModel):
@@ -104,6 +141,9 @@ class MemoryResponse(BaseModel):
     key: MemoryKey
     value: str
     source: str
+    importance: int = 0
+    confidence: float = 0.5
+    user_visible: bool = True
     goal_id: UUID | None = None
     created_at: datetime
     updated_at: datetime
@@ -113,6 +153,9 @@ class MemoryCreateRequest(BaseModel):
     key: MemoryKey
     value: str = Field(..., min_length=1)
     source: str = "chat_extraction"
+    importance: int = 0
+    confidence: float = 0.5
+    user_visible: bool = True
     goal_id: UUID | None = None
 
 
@@ -140,6 +183,7 @@ class EventCreateRequest(BaseModel):
 # ── Skip / Feedback shortcuts ─────────────────────────────────────────────────
 
 class SkipRequest(BaseModel):
+    skip_type: SkipType = SkipType.skip_today
     feedback_text: str | None = None
 
 
@@ -156,6 +200,10 @@ class DailyTasksResponse(BaseModel):
     total_available: int
     selected_count: int
     max_tasks_per_day: int
+    selected_task_ids: list[UUID] = Field(default_factory=list)
+    plans_metadata: dict[str, DailyPlanMetadata] = Field(default_factory=dict)
+    milestones_metadata: dict[str, DailyMilestoneMetadata] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Milestones ─────────────────────────────────────────────────────────────────
@@ -234,6 +282,58 @@ class CreatePlanRequest(BaseModel):
     memory_id: UUID = Field(..., description="ID of the goal memory entry to create a plan from")
 
 
+class GenerateFromAnswersRequest(BaseModel):
+    learning_goal: str = Field(..., min_length=1, description="Q1: Main learning goal category (e.g. 'Get a Job')")
+    focus_area: str = Field(..., min_length=1, description="Q2: Role/field and what to focus on in detail")
+    skill_level: str = Field(..., min_length=1, description="Q3: Current skill level (Beginner / Intermediate / Advanced)")
+    focus_or_avoid: str = Field(default="", description="Q4: Specific things to focus on or avoid")
+    extra_context: str = Field(default="", description="Q5: Anything else about goals")
+
+
+class MissingField(BaseModel):
+    field: str = Field(..., description="Field name that is missing (e.g. 'learning_goal')")
+    question: str = Field(..., description="Question to ask the user to fill this field")
+
+
+# ── Phase 1: Extract fields from chat ────────────────────────────────────────
+
+class ExtractFromChatRequest(BaseModel):
+    """Only the text of the user's own messages — assistant turns are excluded."""
+    user_messages: list[str] = Field(..., min_length=1)
+
+
+class ExtractFromChatResponse(BaseModel):
+    """What the LLM could extract and which wizard fields are still missing."""
+    extracted: dict[str, str | None] = Field(
+        default_factory=dict,
+        description="Extracted field values keyed by field name; None means not found",
+    )
+    missing_fields: list[MissingField] = Field(default_factory=list)
+    ready: bool = Field(
+        ..., description="True when all 3 required fields are present"
+    )
+
+
+# ── Phase 2: Generate plan from pre-filled wizard fields ──────────────────────
+
+class GenerateFromChatRequest(BaseModel):
+    """All 5 wizard fields, fully filled in (mirrors GenerateFromAnswersRequest)."""
+    learning_goal: str = Field(..., min_length=1)
+    focus_area: str = Field(..., min_length=1)
+    skill_level: str = Field(..., min_length=1)
+    focus_or_avoid: str = Field(default="")
+    extra_context: str = Field(default="")
+
+
+class GenerateFromChatResponse(BaseModel):
+    ready: bool = Field(..., description="True if all fields extracted, False if more info needed")
+    missing_fields: list[MissingField] = Field(default_factory=list)
+    message: str = Field(default="", description="Message to show the user (questions or confirmation)")
+    plan: PlanResponse | None = None
+    milestones: list[MilestoneResponse] = Field(default_factory=list)
+    task_count: int = 0
+
+
 class CreatePlanResponse(BaseModel):
     plan: PlanResponse
     milestones: list[MilestoneResponse]
@@ -270,6 +370,7 @@ class PlanDetailResponse(BaseModel):
 
 class PlanChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
+    task_id: str | None = None
 
 
 class PlanChatAction(BaseModel):
@@ -283,45 +384,33 @@ class PlanChatResponse(BaseModel):
     actions: list[PlanChatAction] = []
 
 
-# ── Plan Setup ──────────────────────────────────────────────────────────────────
+# ── Today Chat ────────────────────────────────────────────────────────────────────
 
-class PlanSetupStartRequest(BaseModel):
-    memory_id: str = Field(default="", min_length=0)
-    conversation: list[dict] = Field(..., min_length=1)
-
-
-class QuickOption(BaseModel):
-    label: str
-    value: int | str
+class TodayChatRequest(BaseModel):
+    message: str = Field(..., min_length=1)
+    task_id: str | None = None
 
 
-class PlanSetupStartResponse(BaseModel):
-    plan_id: str
-    setup_step: str
-    message: str
-    quick_options: list[QuickOption]
-    memory_summary: str | None = None
+# ── Daily Summary ────────────────────────────────────────────────────────────────
+
+class DailySummaryResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    date: date
+    summary_text: str
+    stats_json: dict
+    created_at: datetime
 
 
-class PlanSetupDurationRequest(BaseModel):
-    duration_days: int = Field(..., ge=1)
+# ── Episodic Memory ────────────────────────────────────────────────────────────
+
+class EpisodicMemoryResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    type: str
+    content: str
+    context_json: dict | None = None
+    learned_rule: str | None = None
+    created_at: datetime
 
 
-class PlanSetupDurationResponse(BaseModel):
-    setup_step: str
-    message: str
-    quick_options: list[QuickOption]
-
-
-class PlanSetupScheduleRequest(BaseModel):
-    type: str = Field(..., min_length=1)
-    days: list[int] | None = None
-
-
-class PlanSetupScheduleResponse(BaseModel):
-    setup_step: str
-    plan_id: str
-    milestone_count: int | None = None
-    first_milestone: str | None = None
-    tasks_today: int | None = None
-    message: str | None = None

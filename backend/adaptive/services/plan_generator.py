@@ -121,7 +121,7 @@ class PlanGeneratorService:
         # 2. For each milestone, create milestone record + its tasks
         result_milestones = []
         for ms_idx, ms_data in enumerate(milestones_data):
-            ms_status = MilestoneStatus.active if ms_idx == 0 else MilestoneStatus.locked
+            ms_status = MilestoneStatus.active
             milestone = adaptive_store.create_milestone(
                 user_id=user_id,
                 plan_id=plan.id,
@@ -208,7 +208,7 @@ class PlanGeneratorService:
 
         result_milestones = []
         for ms_idx, ms in enumerate(fallback_milestones):
-            ms_status = MilestoneStatus.active if ms_idx == 0 else MilestoneStatus.locked
+            ms_status = MilestoneStatus.active
             milestone = adaptive_store.create_milestone(
                 user_id=user_id,
                 plan_id=plan.id,

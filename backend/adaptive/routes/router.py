@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 import json
 import logging
 import re
@@ -14,23 +14,27 @@ logger = logging.getLogger(__name__)
 
 from backend.auth import get_current_user
 from backend.adaptive.db import adaptive_store
-from backend.adaptive.models import AdjustmentStatus, EventType, MemoryKey, MilestoneStatus, PlanPriority, PlanStatus, TaskStatus
+from backend.adaptive.models import AdjustmentStatus, EventType, MemoryKey, MilestoneStatus, PlanPriority, PlanStatus, SkipType, TaskStatus
 from backend.adaptive.schemas import (
+    AdaptPlanRequest,
     AdjustmentActionRequest,
     AdjustmentSuggestionResponse,
     CreatePlanRequest,
     CreatePlanResponse,
+    DailyMilestoneMetadata,
+    DailyPlanMetadata,
+    GenerateFromAnswersRequest,
+    GenerateFromChatRequest,
+    GenerateFromChatResponse,
+    MissingField,
     DailyTasksResponse,
     EventCreateRequest,
     EventResponse,
+    ExtractFromChatRequest,
+    ExtractFromChatResponse,
     ExtractMemoryRequest,
+    ExtractMemoryResponse,
     FeedbackRequest,
-    PlanSetupDurationRequest,
-    PlanSetupDurationResponse,
-    PlanSetupScheduleRequest,
-    PlanSetupScheduleResponse,
-    PlanSetupStartRequest,
-    PlanSetupStartResponse,
     MemoryCreateRequest,
     MemoryResponse,
     MilestoneCreate,
@@ -40,10 +44,14 @@ from backend.adaptive.schemas import (
     PlanChatRequest,
     PlanChatResponse,
     PlanChatAction,
+    PullExtraTasksRequest,
+    TodayChatRequest,
     PlanControlRequest,
     PlanDetailResponse,
     PlanDetailStats,
     PlanResponse,
+    DailySummaryResponse,
+    EpisodicMemoryResponse,
     PlanUpdateRequest,
     SkipRequest,
     TaskDetailResponse,
@@ -53,13 +61,14 @@ from backend.adaptive.schemas import (
     UserPreferencesUpdate,
 )
 from backend.adaptive.services.adjuster import adjuster_service
-from backend.adaptive.services.eod_adjuster import eod_adjuster_service
+from backend.adaptive.services.deep_review import deep_review_service
+from backend.adaptive.services.adaptation_rules import get_next_working_day
+from backend.adaptive.services.event_triggers import run_all_triggers
+from backend.adaptive.services.task_observer import on_task_status_changed, on_task_skipped, on_app_open
 from backend.adaptive.services.events import events_service
 from backend.adaptive.services.llm_adjuster import llm_adjuster_service
 from backend.adaptive.services.memory_extractor import extract_and_save
 from backend.adaptive.services.plan_generator import plan_generator_service
-from backend.adaptive.services.milestone_generator import generate as generate_milestones
-from backend.adaptive.services.plan_setup import get_setup_state, save_duration, save_schedule, start_plan_setup
 from backend.adaptive.services.task_generator import generate_for_milestone
 from backend.adaptive.services.scheduler import scheduler_service
 from backend.adaptive.services.task_detail_generator import task_detail_generator_service
@@ -67,6 +76,10 @@ from backend.adaptive.services.context_builder import build as build_context
 from backend.lib.llm import chatResponse
 
 router = APIRouter(prefix="/api/adaptive", tags=["adaptive"])
+
+# ── Server-side V2 Feature Flag ───────────────────────────────────────────────
+# Can be flipped via the rollback-webhook endpoint to disable V2 endpoints.
+_v2_enabled: bool = True
 
 
 MILESTONE_INSIGHT_PROMPT = """You are a planning assistant. Given a milestone and its tasks, generate structured insight to help the user succeed.
@@ -148,14 +161,18 @@ async def get_daily_tasks(
     on_date: date | None = None,
     user_id: UUID = Depends(get_current_user),
 ):
-    result = scheduler_service.get_daily_tasks(user_id, on_date)
-    return DailyTasksResponse(
-        date=result["date"],
-        tasks=[_task_to_response(t) for t in result["tasks"]],
-        total_available=result["total_available"],
-        selected_count=result["selected_count"],
-        max_tasks_per_day=result["max_tasks_per_day"],
-    )
+    target_date = on_date or date.today()
+    result = scheduler_service.get_daily_tasks(user_id, target_date)
+    return _daily_schedule_response(result)
+
+
+@router.post("/scheduler/daily/pull-extra", response_model=DailyTasksResponse)
+async def pull_extra_daily_tasks(
+    payload: PullExtraTasksRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    result = scheduler_service.pull_extra_tasks(user_id, payload.count, date.today())
+    return _daily_schedule_response(result)
 
 
 # ── Events ─────────────────────────────────────────────────────────────────────
@@ -227,6 +244,26 @@ async def get_tasks_today(
         raise HTTPException(status_code=500, detail=f"get_tasks_today failed: {str(e)}")
 
 
+@router.get("/tasks/today/v2", response_model=list[TaskResponse])
+async def get_tasks_today_v2(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Backward-compatible V2 endpoint backed by the adaptive scheduler."""
+    if not _v2_enabled:
+        return await get_tasks_today(user_id=user_id)
+
+    try:
+        today = date.today()
+        result = scheduler_service.get_daily_tasks(user_id, today)
+        return [_task_to_response(t) for t in result["tasks"]]
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        logger.error(f"Error in get_tasks_today_v2: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"get_tasks_today_v2 failed: {str(e)}")
+
+
 @router.post("/tasks/update", response_model=TaskResponse)
 async def update_task_status(
     payload: TaskUpdateRequest,
@@ -267,6 +304,33 @@ async def update_task_status(
         if payload.status == TaskStatus.skipped:
             adjuster_service.handle_skip(user_id, task.id)
 
+        # Real-time adaptation: trigger adaptation engine on any status change
+        try:
+            on_task_status_changed(user_id, task.id, payload.status)
+        except Exception as e:
+            logger.warning("Real-time adaptation trigger failed: %s", e)
+
+        # Auto milestone completion check when task is done
+        if payload.status == TaskStatus.done and task.milestone_id:
+            try:
+                is_complete = adaptive_store.check_milestone_completion(user_id, task.milestone_id)
+                if is_complete:
+                    ms = adaptive_store.update_milestone(user_id, task.milestone_id, {"status": MilestoneStatus.completed})
+                    if ms:
+                        next_ms = adaptive_store.activate_next_milestone(user_id, ms.plan_id)
+                        if next_ms:
+                            try:
+                                await generate_for_milestone(str(next_ms.id), str(user_id), adaptive_store)
+                            except Exception as e:
+                                logger.warning("Task generation for milestone %s failed: %s", next_ms.id, e)
+                        # Trigger deep review on milestone completion
+                        try:
+                            deep_review_service.on_milestone_completed(user_id, task.milestone_id)
+                        except Exception as e:
+                            logger.warning("Deep review trigger on milestone failed: %s", e)
+            except Exception as e:
+                logger.warning("Auto milestone check failed: %s", e)
+
         updated = adaptive_store.get_task(task.id)
         if updated is None:
             task.status = payload.status
@@ -292,8 +356,9 @@ async def get_task_detail(
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # If detail already cached, return it immediately
-    if task.detail_json:
+    # If detail already cached, return it — but regenerate if key fields are missing
+    # (e.g. old cache generated before expert_tip was added to the prompt)
+    if task.detail_json and "expert_tip" in task.detail_json:
         return TaskDetailResponse(
             task_id=task.id,
             detail=task.detail_json,
@@ -386,13 +451,23 @@ async def pull_next_task(
     return _task_to_response(task)
 
 
-# ── End-of-Day Adjustment ─────────────────────────────────────────────────────
+# ── Deep Review ─────────────────────────────────────────────────────────────
 
-@router.post("/eod-adjustment")
-async def run_eod_adjustment(
+@router.post("/deep-review")
+async def run_deep_review(
+    trigger_reason: str = "Manual trigger",
+    plan_id: UUID | None = None,
     user_id: UUID = Depends(get_current_user),
 ):
-    result = eod_adjuster_service.run_eod_adjustment(user_id)
+    """Run a deep review (LLM-assisted plan adjustments).
+    Triggered automatically on milestone completion or failure thresholds,
+    but can also be called manually.
+    """
+    result = deep_review_service.run_deep_review(
+        user_id,
+        trigger_reason=trigger_reason,
+        plan_id_filter=plan_id,
+    )
     return result
 
 
@@ -407,14 +482,59 @@ async def skip_task(
     task = adaptive_store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    events_service.record(
-        user_id=user_id,
-        task_id=task_id,
-        plan_id=task.plan_id,
-        event_type=EventType.skipped,
-        feedback_text=payload.feedback_text,
-    )
+
+    if payload.skip_type == SkipType.skip_permanently:
+        # Permanent skip: mark as skipped with reason, no reschedule
+        updated = adaptive_store.set_task_skipped_permanently(
+            task_id, reason=payload.feedback_text,
+        )
+        events_service.record(
+            user_id=user_id,
+            task_id=task_id,
+            plan_id=task.plan_id,
+            event_type=EventType.skipped,
+            feedback_text=payload.feedback_text,
+        )
+        # Save skip reason as memory pattern
+        if payload.feedback_text:
+            try:
+                adaptive_store.create_memory(
+                    user_id=user_id,
+                    key=MemoryKey.pattern,
+                    value=f"Skipped task '{task.title}' permanently: {payload.feedback_text}",
+                    source="skip_action",
+                )
+            except Exception as e:
+                logger.warning("Failed to save skip reason as memory: %s", e)
+    else:
+        # Skip today: reschedule to next working day
+        plan = adaptive_store.get_plan(task.plan_id)
+        working_days = None
+        if plan and plan.schedule_prefs:
+            working_days = plan.schedule_prefs.get("working_days")
+        next_day = get_next_working_day(date.today(), working_days)
+        try:
+            updated = adaptive_store.set_task_rescheduled(task_id, next_day, task.due_date or date.today())
+        except Exception:
+            updated = adaptive_store.reschedule_task(task_id, next_day)
+        adaptive_store.increment_carry_over(task_id)
+        events_service.record(
+            user_id=user_id,
+            task_id=task_id,
+            plan_id=task.plan_id,
+            event_type=EventType.skipped,
+            feedback_text=payload.feedback_text,
+        )
+
+    # Real-time adaptation: recalculate workload immediately after skip
+    try:
+        on_task_skipped(user_id, task_id, skip_type=payload.skip_type.value)
+    except Exception as e:
+        logger.warning("Real-time adaptation on skip failed: %s", e)
+
     updated = adaptive_store.get_task(task_id)
+    if updated is None:
+        updated = task
     return _task_to_response(updated)
 
 
@@ -459,6 +579,9 @@ async def create_memory(
         key=payload.key,
         value=payload.value,
         source=payload.source,
+        importance=payload.importance,
+        confidence=payload.confidence,
+        user_visible=payload.user_visible,
         goal_id=payload.goal_id,
     )
     return _memory_to_response(mem)
@@ -486,23 +609,24 @@ async def delete_memory(
     return {"deleted": True}
 
 
-@router.post("/memory/extract", response_model=MemoryResponse)
+@router.post("/memory/extract", response_model=ExtractMemoryResponse)
 async def extract_memory_v2(
     payload: ExtractMemoryRequest,
     user_id: UUID = Depends(get_current_user),
 ):
-    """Extract structured memory from conversation and save as a single memory row."""
+    """Extract structured memory from conversation with hybrid policy.
+
+    Auto-saves preference/pattern/schedule_habit; returns goal/deadline/constraint
+    as suggestions needing user confirmation."""
     conversation = [{"role": "user", "content": payload.conversation}]
-    mem = await extract_and_save(str(user_id), conversation, adaptive_store)
-    return MemoryResponse(
-        id=mem.id,
-        user_id=mem.user_id,
-        key=mem.key,
-        value=mem.value,
-        source=mem.source,
-        goal_id=mem.goal_id,
-        created_at=mem.created_at,
-        updated_at=mem.updated_at,
+    result = await extract_and_save(str(user_id), conversation, adaptive_store)
+    all_items = result.all_items
+    return ExtractMemoryResponse(
+        extracted=[
+            ExtractedField(key=item["key"], value=item["value"], id=item.get("id"))
+            for item in all_items
+        ],
+        count=len(all_items),
     )
 
 
@@ -514,7 +638,9 @@ async def list_active_plans(
 ):
     try:
         plans = adaptive_store.list_active_plans(user_id)
-        return [_plan_to_response(p) for p in plans]
+        progress = adaptive_store.get_plan_progress_batch([p.id for p in plans]) if plans else {}
+        task_counts = adaptive_store.count_tasks_batch([p.id for p in plans]) if plans else {}
+        return [_plan_to_response(p, progress.get(str(p.id), 0.0), *task_counts.get(str(p.id), (0, 0))) for p in plans]
     except HTTPException:
         raise
     except Exception as e:
@@ -530,7 +656,9 @@ async def list_all_plans(
     """All plans including paused and completed."""
     try:
         plans = adaptive_store.list_all_plans(user_id)
-        return [_plan_to_response(p) for p in plans]
+        progress = adaptive_store.get_plan_progress_batch([p.id for p in plans]) if plans else {}
+        task_counts = adaptive_store.count_tasks_batch([p.id for p in plans]) if plans else {}
+        return [_plan_to_response(p, progress.get(str(p.id), 0.0), *task_counts.get(str(p.id), (0, 0))) for p in plans]
     except HTTPException:
         raise
     except Exception as e:
@@ -589,6 +717,353 @@ async def generate_plan(
         ),
         milestones=milestone_responses,
         task_count=total_tasks,
+    )
+
+
+GENERATE_FROM_ANSWERS_PROMPT = """You are a world-class learning plan architect. Given a learner's answers, create a detailed, milestone-structured learning roadmap.
+
+Break the plan into 4–6 milestones (called "steps"), each with 3–6 tasks (called "courses" or "learning activities"). Make the first step immediately actionable. Each step should build on the previous one.
+
+Return EXACTLY a JSON object with these keys:
+- "plan_title": string — concise, specific plan title (e.g. "Advanced Python for AI Engineering")
+- "plan_summary": string — 1-2 sentence overview
+- "duration_weeks": number — estimated total weeks
+- "milestones": array of objects, each with:
+    - "title": string — step title (e.g. "Building Intelligent AI Agents")
+    - "description": string — what this step achieves
+    - "order_index": number (0-based)
+    - "tasks": array of objects, each with:
+        - "title": string — specific, actionable task name (e.g. "Implementing Agentic Workflows with LangGraph")
+        - "description": string — brief description
+        - "duration_minutes": number
+        - "order_index": number (0-based)
+
+Do not include any markdown blocks. Output raw JSON only.
+
+Learner's goal: {learning_goal}
+Focus area: {focus_area}
+Current skill level: {skill_level}
+Things to focus on or avoid: {focus_or_avoid}
+Additional context: {extra_context}
+Today's date: {today}"""
+
+
+@router.post("/plans/generate-from-answers", response_model=CreatePlanResponse)
+async def generate_plan_from_answers(
+    payload: GenerateFromAnswersRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Generate a full plan from the 5-question AI wizard — no memory_id needed."""
+    from datetime import date as _date
+    import json as _json
+
+    prompt = GENERATE_FROM_ANSWERS_PROMPT.format(
+        learning_goal=payload.learning_goal,
+        focus_area=payload.focus_area,
+        skill_level=payload.skill_level,
+        focus_or_avoid=payload.focus_or_avoid or "none specified",
+        extra_context=payload.extra_context or "none",
+        today=_date.today().isoformat(),
+    )
+
+    try:
+        content = chatResponse(prompt)
+        content = _strip_code_fences(content)
+        parsed = _json.loads(content)
+    except Exception as exc:
+        logger.error(f"generate_plan_from_answers LLM failed: {exc}")
+        # Fallback: simple 3-step plan
+        parsed = {
+            "plan_title": f"{payload.focus_area[:60]} Learning Plan",
+            "plan_summary": f"A structured plan to help you achieve: {payload.learning_goal}",
+            "duration_weeks": 12,
+            "milestones": [
+                {"title": "Foundations", "description": "Get the core basics in place", "order_index": 0,
+                 "tasks": [{"title": "Research and set up your learning environment", "description": "", "duration_minutes": 60, "order_index": 0},
+                           {"title": "Complete an introductory course or tutorial", "description": "", "duration_minutes": 90, "order_index": 1}]},
+                {"title": "Core Skills", "description": "Build the essential skills", "order_index": 1,
+                 "tasks": [{"title": "Work through key concepts with hands-on exercises", "description": "", "duration_minutes": 120, "order_index": 0},
+                           {"title": "Build a small practice project", "description": "", "duration_minutes": 180, "order_index": 1}]},
+                {"title": "Advanced Topics", "description": "Go deeper and apply knowledge", "order_index": 2,
+                 "tasks": [{"title": "Study advanced topics specific to your goal", "description": "", "duration_minutes": 120, "order_index": 0},
+                           {"title": "Build a complete project to demonstrate mastery", "description": "", "duration_minutes": 240, "order_index": 1}]},
+            ],
+        }
+
+    milestones_data = parsed.get("milestones", [])
+    title = parsed.get("plan_title", payload.focus_area[:60])
+
+    # Create the plan record
+    from backend.adaptive.models import PlanIntensity, PlanPriority, MilestoneStatus
+    priority_map = {"Get a Job": PlanPriority.high, "Grow in my current role": PlanPriority.high}
+    plan_priority = priority_map.get(payload.learning_goal, PlanPriority.medium)
+
+    plan, _ = adaptive_store.create_plan_with_tasks(
+        user_id=user_id,
+        goal_id=None,
+        title=title,
+        priority=plan_priority,
+        intensity=PlanIntensity.moderate,
+        tasks=[],
+    )
+
+    result_milestones = []
+    total_task_count = 0
+
+    for ms_idx, ms_data in enumerate(milestones_data):
+        ms_status = MilestoneStatus.active if ms_idx == 0 else MilestoneStatus.locked
+        milestone = adaptive_store.create_milestone(
+            user_id=user_id,
+            plan_id=plan.id,
+            data={
+                "title": ms_data.get("title", f"Step {ms_idx + 1}"),
+                "description": ms_data.get("description", ""),
+                "order_index": ms_data.get("order_index", ms_idx),
+                "status": ms_status,
+            },
+        )
+
+        tasks_to_insert = []
+        for t_data in ms_data.get("tasks", []):
+            tasks_to_insert.append({
+                "plan_id": str(plan.id),
+                "milestone_id": str(milestone.id),
+                "title": t_data.get("title", "Untitled task"),
+                "description": t_data.get("description", ""),
+                "duration_minutes": t_data.get("duration_minutes", 60),
+                "order_index": t_data.get("order_index", 0),
+                "status": "pending",
+                "priority": "medium",
+                "difficulty": "intermediate",
+            })
+
+        task_rows = []
+        if tasks_to_insert:
+            task_res = adaptive_store.client.table("tasks").insert(tasks_to_insert).execute()
+            if task_res[1]:
+                task_rows = [adaptive_store._map_task(row) for row in task_res[1]]
+        total_task_count += len(task_rows)
+        result_milestones.append({"milestone": milestone, "tasks": task_rows})
+
+    milestone_responses = [
+        _milestone_to_response(ms_data["milestone"], ms_data["tasks"])
+        for ms_data in result_milestones
+    ]
+
+    return CreatePlanResponse(
+        plan=PlanResponse(
+            id=plan.id,
+            goal_id=plan.goal_id,
+            memory_id=getattr(plan, 'memory_id', None),
+            user_id=plan.user_id,
+            title=plan.title,
+            status=plan.status,
+            priority=plan.priority,
+            intensity=plan.intensity,
+            created_at=plan.created_at,
+            updated_at=plan.updated_at,
+        ),
+        milestones=milestone_responses,
+        task_count=total_task_count,
+    )
+
+
+EXTRACT_WIZARD_FIELDS_PROMPT = """You are a data extraction engine. Analyze these user messages and extract the following fields if they can be determined. If a field cannot be determined, leave it as null.
+
+Return EXACTLY a JSON object with these keys:
+- "learning_goal": string or null — the user's main learning goal category (e.g. "Get a Job", "Grow in my current role", "Build Projects / Side Hustles", "Strengthen Fundamentals", "Explore a New Field")
+- "focus_area": string or null — the role or field the user wants to focus on, with detail (e.g. "I know intermediate JavaScript and want to focus on advanced aspects")
+- "skill_level": string or null — current skill level (e.g. "Beginner", "Intermediate", "Advanced")
+- "focus_or_avoid": string or null — specific things to focus on or avoid (e.g. "focus on vanilla JavaScript, avoid frameworks")
+- "extra_context": string or null — any additional context about the user's goals or situation
+
+Do not include any markdown blocks. Output raw JSON only.
+
+User messages:
+{user_messages}"""
+
+
+@router.post("/plans/extract-from-chat", response_model=ExtractFromChatResponse)
+async def extract_fields_from_chat(
+    payload: ExtractFromChatRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Phase 1 — Extract wizard fields from the user's own chat messages only.
+
+    Returns which fields were found and which are still missing so the frontend
+    can render targeted MCQ / text prompts for only the gaps.
+    """
+    import json as _json
+
+    # Join only the user's messages, numbered for clarity
+    user_text = "\n".join(
+        f"{i + 1}. {msg}" for i, msg in enumerate(payload.user_messages)
+    )
+
+    extract_prompt = EXTRACT_WIZARD_FIELDS_PROMPT.format(user_messages=user_text)
+    try:
+        content = chatResponse(extract_prompt)
+        content = _strip_code_fences(content)
+        fields = _json.loads(content)
+    except Exception as exc:
+        logger.error(f"extract_fields_from_chat LLM failed: {exc}")
+        fields = {}
+
+    required_fields = {
+        "learning_goal": "What is your main learning goal? (e.g. Get a Job, Grow in my current role, Build Projects / Side Hustles, Strengthen Fundamentals, Explore a New Field)",
+        "focus_area": "What role or field do you want to focus on? Describe in detail what you would like to focus on.",
+        "skill_level": "What is your current skill level in this area? (Beginner, Intermediate, or Advanced)",
+    }
+
+    missing: list[MissingField] = []
+    for field_key, question in required_fields.items():
+        val = fields.get(field_key)
+        if not val or not isinstance(val, str) or val.strip() in ("", "null"):
+            missing.append(MissingField(field=field_key, question=question))
+            fields[field_key] = None
+        else:
+            fields[field_key] = val.strip()
+
+    # Normalise optional fields
+    for opt in ("focus_or_avoid", "extra_context"):
+        val = fields.get(opt)
+        fields[opt] = val.strip() if val and val != "null" else None
+
+    return ExtractFromChatResponse(
+        extracted=fields,
+        missing_fields=missing,
+        ready=len(missing) == 0,
+    )
+
+
+@router.post("/plans/generate-from-chat", response_model=GenerateFromChatResponse)
+async def generate_plan_from_chat(
+    payload: GenerateFromChatRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Phase 2 — Receive fully-filled wizard fields and generate a plan.
+
+    The frontend has already extracted (Phase 1) and asked the user to fill any
+    missing fields; by the time this endpoint is called all 3 required fields are
+    guaranteed to be present.  Uses the identical prompt as the wizard tab.
+    """
+    import json as _json
+    from datetime import date as _date
+    from backend.adaptive.models import PlanIntensity, PlanPriority, MilestoneStatus
+
+    learning_goal = payload.learning_goal
+    focus_area = payload.focus_area
+    skill_level = payload.skill_level
+    focus_or_avoid = payload.focus_or_avoid or "none specified"
+    extra_context = payload.extra_context or "none"
+
+    prompt = GENERATE_FROM_ANSWERS_PROMPT.format(
+        learning_goal=learning_goal,
+        focus_area=focus_area,
+        skill_level=skill_level,
+        focus_or_avoid=focus_or_avoid,
+        extra_context=extra_context,
+        today=_date.today().isoformat(),
+    )
+
+    try:
+        content = chatResponse(prompt)
+        content = _strip_code_fences(content)
+        parsed = _json.loads(content)
+    except Exception as exc:
+        logger.error(f"generate_plan_from_chat LLM failed: {exc}")
+        parsed = {
+            "plan_title": f"{focus_area[:60]} Learning Plan",
+            "plan_summary": f"A structured plan to help you achieve: {learning_goal}",
+            "duration_weeks": 12,
+            "milestones": [
+                {"title": "Foundations", "description": "Get the core basics in place", "order_index": 0,
+                 "tasks": [{"title": "Research and set up your learning environment", "description": "", "duration_minutes": 60, "order_index": 0},
+                           {"title": "Complete an introductory course or tutorial", "description": "", "duration_minutes": 90, "order_index": 1}]},
+                {"title": "Core Skills", "description": "Build the essential skills", "order_index": 1,
+                 "tasks": [{"title": "Work through key concepts with hands-on exercises", "description": "", "duration_minutes": 120, "order_index": 0},
+                           {"title": "Build a small practice project", "description": "", "duration_minutes": 180, "order_index": 1}]},
+                {"title": "Advanced Topics", "description": "Go deeper and apply knowledge", "order_index": 2,
+                 "tasks": [{"title": "Study advanced topics specific to your goal", "description": "", "duration_minutes": 120, "order_index": 0},
+                           {"title": "Build a complete project to demonstrate mastery", "description": "", "duration_minutes": 240, "order_index": 1}]},
+            ],
+        }
+
+    milestones_data = parsed.get("milestones", [])
+    title = parsed.get("plan_title", focus_area[:60])
+
+    priority_map = {"Get a Job": PlanPriority.high, "Grow in my current role": PlanPriority.high}
+    plan_priority = priority_map.get(learning_goal, PlanPriority.medium)
+
+    plan, _ = adaptive_store.create_plan_with_tasks(
+        user_id=user_id,
+        goal_id=None,
+        title=title,
+        priority=plan_priority,
+        intensity=PlanIntensity.moderate,
+        tasks=[],
+    )
+
+    result_milestones = []
+    total_task_count = 0
+
+    for ms_idx, ms_data in enumerate(milestones_data):
+        ms_status = MilestoneStatus.active if ms_idx == 0 else MilestoneStatus.locked
+        milestone = adaptive_store.create_milestone(
+            user_id=user_id,
+            plan_id=plan.id,
+            data={
+                "title": ms_data.get("title", f"Step {ms_idx + 1}"),
+                "description": ms_data.get("description", ""),
+                "order_index": ms_data.get("order_index", ms_idx),
+                "status": ms_status,
+            },
+        )
+
+        tasks_to_insert = []
+        for t_data in ms_data.get("tasks", []):
+            tasks_to_insert.append({
+                "plan_id": str(plan.id),
+                "milestone_id": str(milestone.id),
+                "title": t_data.get("title", "Untitled task"),
+                "description": t_data.get("description", ""),
+                "duration_minutes": t_data.get("duration_minutes", 60),
+                "order_index": t_data.get("order_index", 0),
+                "status": "pending",
+                "priority": "medium",
+                "difficulty": "intermediate",
+            })
+
+        task_rows = []
+        if tasks_to_insert:
+            task_res = adaptive_store.client.table("tasks").insert(tasks_to_insert).execute()
+            if task_res[1]:
+                task_rows = [adaptive_store._map_task(row) for row in task_res[1]]
+        total_task_count += len(task_rows)
+        result_milestones.append({"milestone": milestone, "tasks": task_rows})
+
+    milestone_responses = [
+        _milestone_to_response(ms_data["milestone"], ms_data["tasks"])
+        for ms_data in result_milestones
+    ]
+
+    return GenerateFromChatResponse(
+        ready=True,
+        message=f"Your plan '{title}' is ready with {len(milestone_responses)} milestones and {total_task_count} tasks.",
+        plan=PlanResponse(
+            id=plan.id,
+            goal_id=plan.goal_id,
+            memory_id=getattr(plan, 'memory_id', None),
+            user_id=plan.user_id,
+            title=plan.title,
+            status=plan.status,
+            priority=plan.priority,
+            intensity=plan.intensity,
+            created_at=plan.created_at,
+            updated_at=plan.updated_at,
+        ),
+        milestones=milestone_responses,
+        task_count=total_task_count,
     )
 
 
@@ -666,6 +1141,93 @@ async def patch_plan(
     return _plan_to_response(updated)
 
 
+# ── Adapt Plan (schedule tasks across working days) ────────────────────────────
+
+@router.post("/plans/{plan_id}/adapt", response_model=PlanResponse)
+async def adapt_plan(
+    plan_id: UUID,
+    payload: AdaptPlanRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Distribute all pending tasks in a plan across working days within the deadline.
+
+    Calculates the available working days between today and today+duration_days,
+    then assigns each pending task a due_date spread evenly across those days.
+    Also saves duration_days and working_days into plan.schedule_prefs.
+    """
+    from datetime import timedelta
+
+    plan = adaptive_store.get_plan(plan_id)
+    if plan is None or (plan.user_id and plan.user_id != user_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Get all pending/partial tasks for this plan (ordered by milestone + order_index)
+    tasks = [
+        task for task in scheduler_service._ordered_tasks_for_plan(user_id, plan)
+        if task.status in (TaskStatus.pending, TaskStatus.partial)
+    ]
+    start = date.today()
+    deadline = start + timedelta(days=payload.duration_days - 1)
+    next_prefs = {
+        **(plan.schedule_prefs or {}),
+        "working_days": payload.working_days,
+        "start_date": start.isoformat(),
+        "end_date": deadline.isoformat(),
+    }
+
+    if not tasks:
+        # No tasks to schedule — just save prefs
+        updated = adaptive_store.update_plan(
+            plan_id,
+            duration_days=payload.duration_days,
+            schedule_prefs=next_prefs,
+        )
+        total_t, remaining_t = adaptive_store.count_tasks_for_plan(plan_id)
+        return _plan_to_response(updated or plan, total_tasks=total_t, remaining_tasks=remaining_t)
+
+    # Build list of working dates from today to today + duration_days
+    working_dates: list[date] = []
+    current = start
+    while current <= deadline:
+        # Python weekday(): Monday=0 … Sunday=6
+        if current.weekday() in payload.working_days:
+            working_dates.append(current)
+        current += timedelta(days=1)
+
+    if not working_dates:
+        raise HTTPException(status_code=400, detail="No working days found in the given range")
+
+    # Distribute tasks evenly across working days
+    total_tasks = len(tasks)
+    total_days = len(working_dates)
+    base_per_day = total_tasks // total_days
+    extra = total_tasks % total_days
+
+    task_idx = 0
+    for day_idx, work_date in enumerate(working_dates):
+        count = base_per_day + (1 if day_idx < extra else 0)
+        for _ in range(count):
+            if task_idx >= total_tasks:
+                break
+            task = tasks[task_idx]
+            adaptive_store.reschedule_task(task.id, work_date)
+            task_idx += 1
+
+    # Save schedule preferences on the plan
+    updated = adaptive_store.update_plan(
+        plan_id,
+        duration_days=payload.duration_days,
+        schedule_prefs=next_prefs,
+    )
+
+    # If plan was in 'setup' status, move it to 'active'
+    if plan.status == PlanStatus.setup:
+        updated = adaptive_store.update_plan(plan_id, status=PlanStatus.active)
+
+    total_t, remaining_t = adaptive_store.count_tasks_for_plan(plan_id)
+    return _plan_to_response(updated or plan, total_tasks=total_t, remaining_tasks=remaining_t)
+
+
 # ── Plan Detail ──────────────────────────────────────────────────────────────────
 
 PLAN_CHAT_SYSTEM_PROMPT = """You are Life Agent — an AI planning assistant embedded inside a Plan Detail view. You have full context about this plan, its milestones, and tasks.
@@ -677,7 +1239,14 @@ When the user asks for changes, respond with a JSON block wrapped in ```plan-act
 
 You may include explanatory text BEFORE the code fence. If no actions are needed, just respond with helpful text and no code fence.
 
-Always be specific — reference actual milestone and task names from the plan context."""
+Always be specific — reference actual milestone and task names from the plan context.
+
+When a SELECTED TASK DETAIL section is present in the context, the user is focused on that specific task. Your primary role is to:
+1. Help the user understand and complete that task — explain what it is, why it matters, and how to do it in practical terms.
+2. Suggest relevant YouTube videos, articles, books, or other resources (beyond what's already listed) if the user asks for more learning material.
+3. Give step-by-step guidance, tips, and encouragement tailored to that task's difficulty level.
+4. Answer questions about the task concisely and practically.
+5. If the user wants to modify the plan (skip task, add tasks, etc.), still support that with plan-actions."""
 
 
 @router.get("/plans/{plan_id}/detail", response_model=PlanDetailResponse)
@@ -745,6 +1314,89 @@ async def get_plan_detail(
     )
 
 
+@router.get("/plans/{plan_id}/detail/v2", response_model=PlanDetailResponse)
+async def get_plan_detail_v2(
+    plan_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Optimized plan detail — eliminates N+1 queries.
+
+    Instead of fetching tasks per-milestone (N queries), fetches ALL tasks
+    for the plan in a single query and groups them in-memory.
+    Falls back to V1 if the server-side _v2_enabled flag is False.
+    """
+    if not _v2_enabled:
+        return await get_plan_detail(plan_id=plan_id, user_id=user_id)
+
+    plan = adaptive_store.get_plan(plan_id)
+    if plan is None or (plan.user_id and plan.user_id != user_id):
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    # Single query: all milestones for this plan
+    milestones = adaptive_store.get_milestones_for_plan(user_id, plan_id)
+
+    # Single query: all tasks for this plan (instead of N queries per milestone)
+    res = (
+        adaptive_store.client.table("tasks")
+        .select()
+        .eq("plan_id", str(plan_id))
+        .order("order_index")
+        .execute()
+    )
+    all_task_rows = [adaptive_store._map_task(row) for row in (res[1] if res and res[1] else [])]
+
+    # Group tasks by milestone_id
+    tasks_by_milestone: dict[str, list] = {}
+    for t in all_task_rows:
+        mid = str(t.milestone_id) if t.milestone_id else "__no_milestone__"
+        tasks_by_milestone.setdefault(mid, []).append(t)
+
+    # Aggregate stats (single pass over all_task_rows)
+    total_tasks = len(all_task_rows)
+    completed_tasks = sum(1 for t in all_task_rows if t.status.value == "done")
+    current_ms = None
+    next_ms = None
+    next_task = None
+
+    for i, ms in enumerate(milestones):
+        ms_tasks = tasks_by_milestone.get(str(ms.id), [])
+        if ms.status.value == "active" and current_ms is None:
+            current_ms = {"id": str(ms.id), "title": ms.title, "order_index": ms.order_index}
+            if i + 1 < len(milestones):
+                next_ms_item = milestones[i + 1]
+                next_ms = {"id": str(next_ms_item.id), "title": next_ms_item.title, "order_index": next_ms_item.order_index}
+            for t in ms_tasks:
+                if t.status.value == "pending" and next_task is None:
+                    next_task = {"id": str(t.id), "title": t.title, "milestone_id": str(t.milestone_id) if t.milestone_id else None}
+
+    completed_milestones = sum(1 for m in milestones if m.status.value == "completed")
+    remaining_tasks = total_tasks - completed_tasks
+    progress_pct = int((completed_tasks / total_tasks) * 100) if total_tasks > 0 else 0
+
+    stats = PlanDetailStats(
+        total_tasks=total_tasks,
+        completed_tasks=completed_tasks,
+        remaining_tasks=remaining_tasks,
+        total_milestones=len(milestones),
+        completed_milestones=completed_milestones,
+        progress_pct=progress_pct,
+        current_milestone=current_ms,
+        next_milestone=next_ms,
+        next_task=next_task,
+    )
+
+    milestone_responses = []
+    for ms in milestones:
+        ms_tasks = tasks_by_milestone.get(str(ms.id), [])
+        milestone_responses.append(_milestone_to_response(ms, ms_tasks))
+
+    return PlanDetailResponse(
+        plan=_plan_to_response(plan),
+        stats=stats,
+        milestones=milestone_responses,
+    )
+
+
 @router.post("/plans/{plan_id}/chat", response_model=PlanChatResponse)
 async def plan_chat(
     plan_id: UUID,
@@ -770,8 +1422,36 @@ async def plan_chat(
 
     context_block = "\n".join(plan_summary_lines)
 
-    # System prompt = plan context + plan chat instructions
-    full_system = f"{PLAN_CHAT_SYSTEM_PROMPT}\n\n=== CURRENT PLAN CONTEXT ===\n{context_block}"
+    # ── If a specific task is selected, append task detail context ────────────
+    task_context_block = ""
+    if payload.task_id:
+        try:
+            task = adaptive_store.get_task(UUID(payload.task_id))
+            if task and task.detail_json:
+                d = task.detail_json
+                task_lines = [f"SELECTED TASK: {task.title} [status: {task.status.value}]"]
+                if d.get("what_is_this"):
+                    task_lines.append(f"  What is this: {d['what_is_this']}")
+                if d.get("why_it_matters"):
+                    task_lines.append(f"  Why it matters: {d['why_it_matters']}")
+                if d.get("how_to_do_it"):
+                    for step in d["how_to_do_it"]:
+                        task_lines.append(f"  Step {step.get('step','?')}: {step.get('instruction','')}")
+                if d.get("resources"):
+                    for r in d["resources"]:
+                        task_lines.append(f"  Resource [{r.get('type','link')}]: {r.get('title','')} — {r.get('description','')}")
+                if d.get("expert_tip"):
+                    task_lines.append(f"  Expert tip: {d['expert_tip']}")
+                if d.get("todays_example"):
+                    task_lines.append(f"  Today's example: {d['todays_example']}")
+                if d.get("estimated_difficulty"):
+                    task_lines.append(f"  Estimated difficulty: {d['estimated_difficulty']}")
+                task_context_block = "\n\n=== SELECTED TASK DETAIL ===\n" + "\n".join(task_lines)
+        except Exception as e:
+            logger.warning("task_context_fetch_error=%s", e)
+
+    # System prompt = plan context + (optional) task detail + plan chat instructions
+    full_system = f"{PLAN_CHAT_SYSTEM_PROMPT}\n\n=== CURRENT PLAN CONTEXT ===\n{context_block}{task_context_block}"
     prompt = payload.message
 
     try:
@@ -809,105 +1489,162 @@ async def plan_chat(
     return PlanChatResponse(reply=reply_text, actions=actions)
 
 
-# ── Plan Setup (interactive dialogue) ──────────────────────────────────────────
+# ── Today Chat ────────────────────────────────────────────────────────────────────
 
-@router.post("/plans/setup/start", response_model=PlanSetupStartResponse)
-async def plan_setup_start(
-    payload: PlanSetupStartRequest,
+TODAY_CHAT_SYSTEM_PROMPT = """You are Life Agent — an AI planning assistant embedded inside the Today screen. You have full context about the user's daily schedule, their tasks for today, and which plans and milestones those tasks belong to.
+
+Your role is to:
+1. Help the user understand and complete their tasks for today — give practical, concise advice on how to tackle specific tasks.
+2. Motivate and encourage the user — celebrate completed tasks, acknowledge progress, and help them stay on track.
+3. Answer questions about their schedule — how many tasks remain, which plan a task belongs to, what milestone it's part of, how long a task should take.
+4. Suggest time-management strategies — e.g. "Do the hard tasks first" or "Take a 5-min break after each task".
+5. Help with adjustments — if the user feels overwhelmed, suggest skipping low-priority tasks or rescheduling. If they want to focus on a specific plan, help them prioritize those tasks.
+6. When a SELECTED TASK DETAIL section is present, focus on that specific task — explain what it is, why it matters, and give step-by-step guidance.
+
+When the user asks for changes to their schedule or tasks, respond with a JSON block wrapped in ```plan-actions``` code fences containing an array of action objects. Each action has:
+- "action": one of "skip_task", "mark_blocked", "add_task", "remove_task"
+- "target_id": the UUID of the task being modified (if applicable)
+- "params": object with action-specific parameters (e.g. {"reason": "..."}, {"title": "..."})
+
+You may include explanatory text BEFORE the code fence. If no actions are needed, just respond with helpful text and no code fence.
+
+Always be specific — reference actual task names, plan names, and milestone names from the today context."""
+
+
+@router.post("/today/chat", response_model=PlanChatResponse)
+async def today_chat(
+    payload: TodayChatRequest,
     user_id: UUID = Depends(get_current_user),
 ):
-    """Extract memory from conversation and start the interactive plan setup dialogue."""
-    # Step 1: Extract memory
-    mem = await extract_and_save(str(user_id), payload.conversation, adaptive_store)
+    """AI chat about today's schedule — returns reply + optional structured actions."""
+    from datetime import date as _date
 
-    # Step 2: Start plan setup linked to the memory row
-    result = await start_plan_setup(str(user_id), str(mem.id), adaptive_store)
+    today = _date.today()
+    result = scheduler_service.get_daily_tasks(user_id, today)
+    tasks = result.get("tasks", [])
 
-    # Derive a short summary from the memory value
-    memory_summary = None
-    try:
-        parsed = json.loads(mem.value)
-        memory_summary = parsed.get("summary") or parsed.get("goal")
-    except (json.JSONDecodeError, AttributeError):
-        memory_summary = mem.value[:120] if mem.value else None
+    # Build today's context summary
+    plan_ids = {t.plan_id for t in tasks}
+    plans_by_id = {}
+    for pid in plan_ids:
+        plan = adaptive_store.get_plan(pid)
+        if plan:
+            plans_by_id[pid] = plan
 
-    return PlanSetupStartResponse(
-        plan_id=result["plan_id"],
-        setup_step=result["setup_step"],
-        message=result["message"],
-        quick_options=result["quick_options"],
-        memory_summary=memory_summary,
-    )
+    milestone_ids = {t.milestone_id for t in tasks if t.milestone_id}
+    milestones_by_id = {}
+    for pid, plan in plans_by_id.items():
+        if not plan.user_id:
+            continue
+        for ms in adaptive_store.get_milestones_for_plan(plan.user_id, pid):
+            if ms.id in milestone_ids:
+                milestones_by_id[ms.id] = ms
 
+    done_count = sum(1 for t in tasks if t.status.value == "done")
+    pending_count = sum(1 for t in tasks if t.status.value == "pending")
+    skipped_count = sum(1 for t in tasks if t.status.value == "skipped")
 
-@router.post("/plans/{plan_id}/setup/duration", response_model=PlanSetupDurationResponse)
-async def plan_setup_duration(
-    plan_id: UUID,
-    payload: PlanSetupDurationRequest,
-    user_id: UUID = Depends(get_current_user),
-):
-    """Save the chosen duration for a plan in setup."""
-    plan = adaptive_store.get_plan(plan_id)
-    if plan is None or (plan.user_id and plan.user_id != user_id):
-        raise HTTPException(status_code=404, detail="Plan not found")
+    context_lines = [
+        f"Date: {today.isoformat()}",
+        f"Tasks: {len(tasks)} total — {done_count} done, {pending_count} pending, {skipped_count} skipped",
+        f"Max tasks per day: {result.get('max_tasks_per_day', 'N/A')}",
+        "",
+    ]
 
-    result = await save_duration(str(user_id), str(plan_id), payload.duration_days, adaptive_store)
-    return PlanSetupDurationResponse(
-        setup_step=result["setup_step"],
-        message=result["message"],
-        quick_options=result["quick_options"],
-    )
+    # Group tasks by plan → milestone
+    tasks_by_plan: dict = {}
+    for t in tasks:
+        tasks_by_plan.setdefault(t.plan_id, []).append(t)
 
+    for pid, plan_tasks in tasks_by_plan.items():
+        plan = plans_by_id.get(pid)
+        plan_label = plan.title if plan else "Unknown Plan"
+        plan_status = plan.status.value if plan else "unknown"
+        context_lines.append(f"Plan: {plan_label} (status: {plan_status})")
 
-@router.post("/plans/{plan_id}/setup/schedule", response_model=PlanSetupScheduleResponse)
-async def plan_setup_schedule(
-    plan_id: UUID,
-    payload: PlanSetupScheduleRequest,
-    user_id: UUID = Depends(get_current_user),
-):
-    """Save schedule preferences for a plan in setup. Triggers milestone generation when complete."""
-    plan = adaptive_store.get_plan(plan_id)
-    if plan is None or (plan.user_id and plan.user_id != user_id):
-        raise HTTPException(status_code=404, detail="Plan not found")
+        # Sub-group by milestone
+        by_ms: dict = {}
+        for t in plan_tasks:
+            mid = t.milestone_id or "__no_ms__"
+            by_ms.setdefault(mid, []).append(t)
 
-    schedule_prefs = {"type": payload.type}
-    if payload.days is not None:
-        schedule_prefs["days"] = payload.days
+        for mid, ms_tasks in by_ms.items():
+            ms = milestones_by_id.get(mid) if mid != "__no_ms__" else None
+            ms_label = ms.title if ms else "No milestone"
+            context_lines.append(f"  Milestone: {ms_label}")
+            for t in ms_tasks:
+                status_str = t.status.value
+                duration_str = f" ({t.duration_minutes}min)" if t.duration_minutes else ""
+                carry_str = f" [carry-over ×{t.carry_over_count}]" if t.carry_over_count > 0 else ""
+                struggling_str = " ⚠ struggling" if t.struggling else ""
+                context_lines.append(f"    - {t.title} [{status_str}]{duration_str}{carry_str}{struggling_str}")
+        context_lines.append("")
 
-    result = await save_schedule(str(user_id), str(plan_id), schedule_prefs, adaptive_store)
+    context_block = "\n".join(context_lines)
 
-    # If setup is complete, trigger milestone + task generation
-    if result["setup_step"] == "complete":
-        milestones = []
-        first_milestone_title = None
-        tasks_today = 0
+    # ── If a specific task is selected, append task detail context ────────────
+    task_context_block = ""
+    if payload.task_id:
         try:
-            milestones = await generate_milestones(str(plan_id), str(user_id), adaptive_store)
-            # Generate tasks for the first (active) milestone only
-            if milestones:
-                first_milestone_title = milestones[0].title
-                tasks = await generate_for_milestone(str(milestones[0].id), str(user_id), adaptive_store)
-                today_iso = date.today().isoformat()
-                tasks_today = sum(1 for t in tasks if t.due_date and t.due_date.isoformat() == today_iso)
+            task = adaptive_store.get_task(UUID(payload.task_id))
+            if task and task.detail_json:
+                d = task.detail_json
+                task_lines = [f"SELECTED TASK: {task.title} [status: {task.status.value}]"]
+                if d.get("what_is_this"):
+                    task_lines.append(f"  What is this: {d['what_is_this']}")
+                if d.get("why_it_matters"):
+                    task_lines.append(f"  Why it matters: {d['why_it_matters']}")
+                if d.get("how_to_do_it"):
+                    for step in d["how_to_do_it"]:
+                        task_lines.append(f"  Step {step.get('step','?')}: {step.get('instruction','')}")
+                if d.get("resources"):
+                    for r in d["resources"]:
+                        task_lines.append(f"  Resource [{r.get('type','link')}]: {r.get('title','')} — {r.get('description','')}")
+                if d.get("expert_tip"):
+                    task_lines.append(f"  Expert tip: {d['expert_tip']}")
+                if d.get("todays_example"):
+                    task_lines.append(f"  Today's example: {d['todays_example']}")
+                if d.get("estimated_difficulty"):
+                    task_lines.append(f"  Estimated difficulty: {d['estimated_difficulty']}")
+                task_context_block = "\n\n=== SELECTED TASK DETAIL ===\n" + "\n".join(task_lines)
         except Exception as e:
-            logger.warning("Milestone/task generation failed for plan %s: %s", plan_id, e)
+            logger.warning("today_task_context_fetch_error=%s", e)
 
-        milestone_count = len(milestones)
-        message = f"Your plan is ready. You have {tasks_today} task{'s' if tasks_today != 1 else ''} scheduled for today."
+    full_system = f"{TODAY_CHAT_SYSTEM_PROMPT}\n\n=== TODAY'S SCHEDULE ===\n{context_block}{task_context_block}"
+    prompt = payload.message
 
-        return PlanSetupScheduleResponse(
-            setup_step="ready",
-            plan_id=str(plan.id),
-            milestone_count=milestone_count,
-            first_milestone=first_milestone_title,
-            tasks_today=tasks_today,
-            message=message,
-        )
+    try:
+        content = chatResponse(prompt, system=full_system)
+    except Exception as exc:
+        logger.exception("Today chat LLM call failed")
+        return PlanChatResponse(reply=f"Sorry, I couldn't process that: {exc}", actions=[])
 
-    return PlanSetupScheduleResponse(
-        setup_step=result["setup_step"],
-        plan_id=result.get("plan_id", str(plan.id)),
-    )
+    # Parse actions from ```plan-actions``` code fences
+    actions: list[PlanChatAction] = []
+    reply_text = content
+    action_match = re.search(r"```plan-actions\s*\n([\s\S]*?)\n```", content)
+    if action_match:
+        try:
+            action_json = json.loads(action_match.group(1))
+            if isinstance(action_json, list):
+                for a in action_json:
+                    actions.append(PlanChatAction(
+                        action=a.get("action", ""),
+                        target_id=a.get("target_id"),
+                        params=a.get("params", {}),
+                    ))
+            elif isinstance(action_json, dict):
+                actions.append(PlanChatAction(
+                    action=action_json.get("action", ""),
+                    target_id=action_json.get("target_id"),
+                    params=action_json.get("params", {}),
+                ))
+        except json.JSONDecodeError:
+            pass
+        reply_text = content[:action_match.start()] + content[action_match.end():]
+        reply_text = reply_text.strip()
+
+    return PlanChatResponse(reply=reply_text, actions=actions)
 
 
 # ── Create Plan from Memory ───────────────────────────────────────────────────
@@ -951,22 +1688,21 @@ async def create_plan_from_memory(
 
 # ── Memory Extraction ──────────────────────────────────────────────────────────
 
-@router.post("/extract-memory", response_model=MemoryResponse)
+@router.post("/extract-memory", response_model=ExtractMemoryResponse)
 async def extract_memory(
     payload: ExtractMemoryRequest,
     user_id: UUID = Depends(get_current_user),
 ):
+    """Legacy endpoint — same hybrid extraction as /memory/extract."""
     conversation = [{"role": "user", "content": payload.conversation}]
-    mem = await extract_and_save(str(user_id), conversation, adaptive_store)
-    return MemoryResponse(
-        id=mem.id,
-        user_id=mem.user_id,
-        key=mem.key,
-        value=mem.value,
-        source=mem.source,
-        goal_id=mem.goal_id,
-        created_at=mem.created_at,
-        updated_at=mem.updated_at,
+    result = await extract_and_save(str(user_id), conversation, adaptive_store)
+    all_items = result.all_items
+    return ExtractMemoryResponse(
+        extracted=[
+            ExtractedField(key=item["key"], value=item["value"], id=item.get("id"))
+            for item in all_items
+        ],
+        count=len(all_items),
     )
 
 
@@ -1084,6 +1820,11 @@ async def check_milestone_completion(
             await generate_for_milestone(str(next_ms.id), str(user_id), adaptive_store)
         except Exception as e:
             logger.warning("Task generation for milestone %s failed: %s", next_ms.id, e)
+    # Trigger deep review on milestone completion
+    try:
+        deep_review_service.on_milestone_completed(user_id, milestone_id)
+    except Exception as e:
+        logger.warning("Deep review trigger on milestone failed: %s", e)
     return {
         "completed": True,
         "milestone": _milestone_to_response(ms, []),
@@ -1181,9 +1922,273 @@ async def get_milestone_insight(
     )
 
 
+# ── Admin / Rollback ────────────────────────────────────────────────────────────
+
+@router.post("/admin/rollback-webhook")
+async def rollback_webhook(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Emergency rollback: disables V2 endpoints server-side.
+
+    When triggered, all /v2 endpoints will fall back to their V1
+    implementations. This is the server-side kill-switch that complements
+    the client-side feature flag.
+    """
+    global _v2_enabled
+    previous = _v2_enabled
+    _v2_enabled = False
+    logger.warning("ROLLBACK WEBHOOK TRIGGERED by user %s — V2 disabled (was %s)", user_id, previous)
+    return {"v2_enabled": False, "previous": previous, "message": "V2 endpoints disabled. All /v2 routes now fall back to V1."}
+
+
+@router.post("/admin/enable-v2")
+async def enable_v2(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Re-enable V2 endpoints after a rollback."""
+    global _v2_enabled
+    previous = _v2_enabled
+    _v2_enabled = True
+    logger.info("V2 RE-ENABLED by user %s (was %s)", user_id, previous)
+    return {"v2_enabled": True, "previous": previous, "message": "V2 endpoints re-enabled."}
+
+
+@router.get("/admin/v2-status")
+async def v2_status(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Check the current state of the server-side V2 feature flag."""
+    return {"v2_enabled": _v2_enabled}
+
+
+# ── Event Triggers / Proactive Nudges ─────────────────────────────────────────
+
+@router.post("/triggers/check")
+async def check_triggers(
+    task_id: UUID | None = None,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Run all real-time event triggers for the user. Returns list of nudges."""
+    nudges = run_all_triggers(user_id, task_id=task_id)
+    return {"nudges": nudges}
+
+
+# ── Training Data Collection (Phase 1b) ──────────────────────────────────────
+
+@router.post("/collect-prediction-data")
+async def collect_prediction_data(
+    task_id: UUID,
+    scheduled_hour: int | None = None,
+    task_category: str | None = None,
+    day_of_week: int | None = None,
+    actual_completed: bool | None = None,
+    duration_seconds: int | None = None,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Collect task completion prediction data for on-device ML training."""
+    data = {
+        "user_id": str(user_id),
+        "task_id": str(task_id),
+    }
+    if scheduled_hour is not None:
+        data["scheduled_hour"] = scheduled_hour
+    if task_category is not None:
+        data["task_category"] = task_category
+    if day_of_week is not None:
+        data["day_of_week"] = day_of_week
+    if actual_completed is not None:
+        data["actual_completed"] = actual_completed
+    if duration_seconds is not None:
+        data["duration_seconds"] = duration_seconds
+
+    res = adaptive_store.client.table("task_completion_predictions").insert(data).execute()
+    return {"status": "recorded"}
+
+
+@router.get("/model-weights")
+async def get_model_weights(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Stub endpoint for on-device ML model weights. Returns placeholder."""
+    return {
+        "version": "0.1.0",
+        "weights": {},
+        "features": ["scheduled_hour", "day_of_week", "task_category", "carry_over_count"],
+        "message": "Model weights not yet trained. Collect more data first.",
+    }
+
+
+# ── Daily Summary (instant read, no LLM) ─────────────────────────────────────────
+
+@router.get("/daily-summary", response_model=DailySummaryResponse | None)
+async def get_daily_summary(
+    for_date: date | None = None,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Get cached daily summary for a date. Returns None if no summary exists yet."""
+    target = for_date or date.today()
+    summary = adaptive_store.get_daily_summary(user_id, target)
+    if summary is None:
+        return None
+    return DailySummaryResponse(
+        id=summary.id,
+        user_id=summary.user_id,
+        date=summary.date,
+        summary_text=summary.summary_text,
+        stats_json=summary.stats_json,
+        created_at=summary.created_at,
+    )
+
+
+# ── Episodic Memories ─────────────────────────────────────────────────────────
+
+@router.get("/episodic-memories", response_model=list[EpisodicMemoryResponse])
+async def list_episodic_memories(
+    limit: int = 20,
+    user_id: UUID = Depends(get_current_user),
+):
+    mems = adaptive_store.list_episodic_memories(user_id, limit=limit)
+    return [
+        EpisodicMemoryResponse(
+            id=m.id,
+            user_id=m.user_id,
+            type=m.type,
+            content=m.content,
+            context_json=m.context_json,
+            learned_rule=m.learned_rule,
+            created_at=m.created_at,
+        )
+        for m in mems
+    ]
+
+
+# ── App-Open Adaptation (replaces midnight cron) ──────────────────────────────
+
+@router.post("/adapt/on-open")
+async def adapt_on_app_open(
+    user_id: UUID = Depends(get_current_user),
+):
+    """App-open adaptation: catches up on overdue tasks, rebalances workload,
+    runs proactive triggers. The system adapts the moment the user engages.
+    """
+    result = on_app_open(user_id)
+    return {"status": "adapted", **result}
+
+
+@router.post("/adapt/on-event")
+async def adapt_on_event(
+    event_type: str,
+    task_id: UUID | None = None,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Manual trigger for the adaptation engine on a specific event.
+    Primarily for debugging / manual override.
+    """
+    from backend.adaptive.services.adaptation_engine import adapt_on_event as _adapt
+    context = {}
+    if task_id:
+        context["task_id"] = str(task_id)
+    result = _adapt(user_id, event_type, context)
+    return result
+
+
+# ── Deep Review (trigger-based, replaces Sunday cron) ─────────────────────────
+
+@router.post("/deep-review/check")
+async def trigger_deep_review_check(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Check failure thresholds and trigger a deep review if needed.
+    Also triggered automatically on milestone completion and task skips.
+    """
+    result = deep_review_service.check_and_trigger(user_id)
+    if result is None:
+        return {"triggered": False, "reason": "No failure threshold reached"}
+    return {"triggered": True, "review": result}
+
+
+@router.post("/deep-review/milestone/{milestone_id}")
+async def trigger_deep_review_milestone(
+    milestone_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Manually trigger a deep review after a milestone completion.
+    This is also triggered automatically when a milestone is completed.
+    """
+    result = deep_review_service.on_milestone_completed(user_id, milestone_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    return {"triggered": True, "review": result}
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _plan_to_response(p) -> PlanResponse:
+
+def _daily_schedule_response(result: dict, adapt_result: dict | None = None) -> DailyTasksResponse:
+    tasks = result["tasks"]
+    plan_ids = {t.plan_id for t in tasks}
+    milestone_ids = {t.milestone_id for t in tasks if t.milestone_id}
+
+    plans_by_id = {}
+    plans_metadata: dict[str, DailyPlanMetadata] = {}
+    for plan_id in plan_ids:
+        plan = adaptive_store.get_plan(plan_id)
+        if plan:
+            plans_by_id[plan_id] = plan
+            plans_metadata[str(plan_id)] = DailyPlanMetadata(
+                id=plan.id,
+                title=plan.title,
+                priority=plan.priority,
+                status=plan.status,
+            )
+
+    milestones_metadata: dict[str, DailyMilestoneMetadata] = {}
+    for plan_id, plan in plans_by_id.items():
+        if not plan.user_id:
+            continue
+        for ms in adaptive_store.get_milestones_for_plan(plan.user_id, plan_id):
+            if ms.id in milestone_ids:
+                milestones_metadata[str(ms.id)] = DailyMilestoneMetadata(
+                    id=ms.id,
+                    plan_id=ms.plan_id,
+                    title=ms.title,
+                    status=ms.status,
+                    order_index=ms.order_index,
+                )
+
+    task_plan_names = {
+        str(t.id): plans_metadata.get(str(t.plan_id)).title
+        for t in tasks
+        if plans_metadata.get(str(t.plan_id))
+    }
+    task_milestone_titles = {
+        str(t.id): milestones_metadata.get(str(t.milestone_id)).title
+        for t in tasks
+        if t.milestone_id and milestones_metadata.get(str(t.milestone_id))
+    }
+
+    return DailyTasksResponse(
+        date=result["date"],
+        tasks=[_task_to_response(t) for t in tasks],
+        total_available=result["total_available"],
+        selected_count=result["selected_count"],
+        max_tasks_per_day=result["max_tasks_per_day"],
+        selected_task_ids=[t.id for t in tasks],
+        plans_metadata=plans_metadata,
+        milestones_metadata=milestones_metadata,
+        metadata={
+            "adaptation": adapt_result or {},
+            "plans_queried": result.get("plans_queried", 0),
+            "plan_names": task_plan_names,
+            "milestone_titles": task_milestone_titles,
+            "plans_working_day": result.get("plans_working_day", {}),
+            "daily_limit": result.get("daily_limit", result["max_tasks_per_day"]),
+            "extra_task_ids": result.get("extra_task_ids", []),
+            "locked": result.get("locked", False),
+        },
+    )
+
+def _plan_to_response(p, progress_pct: float = 0.0, total_tasks: int = 0, remaining_tasks: int = 0) -> PlanResponse:
     return PlanResponse(
         id=p.id,
         goal_id=p.goal_id,
@@ -1195,6 +2200,9 @@ def _plan_to_response(p) -> PlanResponse:
         intensity=p.intensity,
         duration_days=getattr(p, 'duration_days', None),
         schedule_prefs=getattr(p, 'schedule_prefs', None),
+        progress_pct=progress_pct,
+        total_tasks=total_tasks,
+        remaining_tasks=remaining_tasks,
         created_at=p.created_at,
         updated_at=p.updated_at,
     )
@@ -1216,6 +2224,10 @@ def _task_to_response(t) -> TaskResponse:
         order_index=t.order_index,
         duration_minutes=t.duration_minutes,
         detail_json=t.detail_json,
+        rescheduled_from=getattr(t, 'rescheduled_from', None),
+        struggling=getattr(t, 'struggling', False),
+        skip_reason=getattr(t, 'skip_reason', None),
+        skipped_at=getattr(t, 'skipped_at', None),
         created_at=t.created_at,
         updated_at=t.updated_at,
     )
@@ -1245,6 +2257,9 @@ def _memory_to_response(m) -> MemoryResponse:
         key=m.key,
         value=m.value,
         source=m.source,
+        importance=getattr(m, "importance", 0),
+        confidence=getattr(m, "confidence", 0.5),
+        user_visible=getattr(m, "user_visible", True),
         goal_id=m.goal_id,
         created_at=m.created_at,
         updated_at=m.updated_at,

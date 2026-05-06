@@ -21,6 +21,7 @@ Return EXACTLY a JSON object with these keys:
     - "title": string
     - "description": string
 - "todays_example": string — a concrete example they can do right now
+- "expert_tip": string — one concise expert tip or shortcut for this task (must not be empty)
 - "estimated_difficulty": "easy" | "medium" | "hard"
 
 Do not include any markdown blocks, only the raw JSON.
@@ -68,7 +69,7 @@ class TaskDetailGeneratorService:
             return self._fallback_detail(task_title)
 
         # Validate expected keys exist
-        required_keys = {"what_is_this", "why_it_matters", "how_to_do_it", "resources", "todays_example", "estimated_difficulty"}
+        required_keys = {"what_is_this", "why_it_matters", "how_to_do_it", "resources", "todays_example", "expert_tip", "estimated_difficulty"}
         if not required_keys.issubset(parsed.keys()):
             print(f"Task detail generator: LLM response missing keys. Got: {list(parsed.keys())}")
             return self._fallback_detail(task_title)
@@ -89,6 +90,7 @@ class TaskDetailGeneratorService:
                 {"type": "article", "title": "Getting Started Guide", "description": "A general guide on how to approach new learning tasks"},
             ],
             "todays_example": f"Spend 15 minutes researching '{task_title}' and write down 3 key things you learned.",
+            "expert_tip": "Break the task into the smallest possible first step, then focus only on that. Momentum beats perfectionism.",
             "estimated_difficulty": "medium",
         }
 

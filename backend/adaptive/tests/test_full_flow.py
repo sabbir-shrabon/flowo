@@ -4,7 +4,7 @@ Full system flow simulation test.
 Tests the complete adaptive planning pipeline:
 1. Memory extraction → 2. Plan creation → 3. Task generation →
 4. Today's tasks → 5. Task updates → 6. Scheduler →
-7. Rule-based adjustments → 8. EOD LLM adjustment
+7. Rule-based adjustments → 8. Deep Review (trigger-based)
 
 Simulates: multiple plans, skipped tasks, busy day.
 
@@ -28,7 +28,7 @@ from backend.adaptive.models import (
     TaskStatus,
 )
 from backend.adaptive.services.adjuster import adjuster_service
-from backend.adaptive.services.eod_adjuster import eod_adjuster_service
+from backend.adaptive.services.deep_review import deep_review_service
 from backend.adaptive.services.plan_generator import plan_generator_service
 from backend.adaptive.services.scheduler import scheduler_service
 
@@ -338,24 +338,28 @@ def run_tests():
     for p in all_plans:
         print(f"    Plan {str(p.id)[:8]}: {p.title} | status={p.status.value} | priority={p.priority.value}")
 
-    # ── Step 10: EOD LLM Adjustment ──────────────────────────────────────
-    print("\n── Step 10: End-of-Day LLM Adjustment ─────────────────────────")
+    # ── Step 10: Deep Review (trigger-based) ──────────────────────────────────
+    print("\n── Step 10: Deep Review (Trigger-Based) ─────────────────────────")
     print("    (This calls the LLM — may take a few seconds or use fallback)")
 
-    eod_result = eod_adjuster_service.run_eod_adjustment(user_id)
-    has_eod = "summary" in eod_result
-    results.append(("EOD adjustment ran", has_eod))
-    print(_tag("EOD adjustment ran", has_eod))
-    if has_eod:
-        print(f"    Summary: {eod_result['summary']}")
-        print(f"    Plan adjustments: {len(eod_result['plan_adjustments'])}")
-        for adj in eod_result["plan_adjustments"]:
+    review_result = deep_review_service.run_deep_review(
+        user_id,
+        trigger_reason="Test: simulated failure threshold",
+    )
+    has_review = "summary" in review_result
+    results.append(("Deep review ran", has_review))
+    print(_tag("Deep review ran", has_review))
+    if has_review:
+        print(f"    Trigger: {review_result.get('trigger_reason', '?')}")
+        print(f"    Summary: {review_result['summary']}")
+        print(f"    Plan adjustments: {len(review_result['plan_adjustments'])}")
+        for adj in review_result["plan_adjustments"]:
             print(f"      - {adj.get('action', '?')} | reason={adj.get('reason', '?')}")
-        print(f"    Difficulty adjustments: {len(eod_result['difficulty_adjustments'])}")
-        for adj in eod_result["difficulty_adjustments"]:
+        print(f"    Difficulty adjustments: {len(review_result['difficulty_adjustments'])}")
+        for adj in review_result["difficulty_adjustments"]:
             print(f"      - {adj.get('old_difficulty', '?')} → {adj.get('new_difficulty', '?')} | reason={adj.get('reason', '?')}")
-        print(f"    Next-day modifications: {len(eod_result['next_day_modifications'])}")
-        for mod in eod_result["next_day_modifications"]:
+        print(f"    Task modifications: {len(review_result['task_modifications'])}")
+        for mod in review_result["task_modifications"]:
             print(f"      - {mod.get('action', '?')} | reason={mod.get('reason', '?')}")
 
     # ── Final Summary ─────────────────────────────────────────────────────

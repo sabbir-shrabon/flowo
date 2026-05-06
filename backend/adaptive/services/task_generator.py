@@ -21,6 +21,7 @@ Milestone: {milestone_title}
 Milestone description: {milestone_description}
 Milestone outcome: {milestone_outcome}
 Available working days: {working_days_count} days
+Daily time commitment: {daily_minutes} minutes per day
 Start date: {start_date}
 
 Return this JSON:
@@ -40,7 +41,7 @@ Rules:
 - Create exactly {working_days_count} tasks (one per working day)
 - Each task must directly build toward the milestone outcome
 - Tasks should progress in difficulty — start easy, get harder
-- Duration between 15 and 90 minutes
+- Each task's duration_minutes should fit within the user's {daily_minutes} min/day commitment
 - day_offset is how many days from today to schedule (0 = today)
 - Only use working days based on schedule, skip non-working days
 - Return ONLY valid JSON."""
@@ -199,6 +200,11 @@ async def generate_for_milestone(
     if working_days_count < 1:
         working_days_count = 1  # at least one task
 
+    # Extract daily time commitment
+    daily_minutes = 30
+    if plan.schedule_prefs and isinstance(plan.schedule_prefs, dict):
+        daily_minutes = plan.schedule_prefs.get("daily_minutes", 30)
+
     # Build prompt
     prompt = TASK_PROMPT.format(
         goal=goal,
@@ -206,6 +212,7 @@ async def generate_for_milestone(
         milestone_description=milestone.description or "",
         milestone_outcome=milestone.outcome or "",
         working_days_count=working_days_count,
+        daily_minutes=daily_minutes,
         start_date=start_date.isoformat(),
     )
 

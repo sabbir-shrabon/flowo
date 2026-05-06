@@ -171,6 +171,48 @@ async def build(user_id: str, session: dict, db: AdaptiveStore) -> str:
         f"- {m.value}" for m in memory_items
     ) if memory_items else "No memory items yet."
 
+    # Struggling tasks section
+    struggling_lines: list[str] = []
+    try:
+        for plan in plans:
+            plan_tasks = db.get_tasks_for_date(uid, today)
+            struggling = [t for t in plan_tasks if getattr(t, 'struggling', False)]
+            for t in struggling:
+                rescheduled_from = getattr(t, 'rescheduled_from', None)
+                from_info = f" (rescheduled from {rescheduled_from})" if rescheduled_from else ""
+                struggling_lines.append(f"- {t.title}: carried over {t.carry_over_count}x{from_info}")
+    except Exception:
+        pass
+    struggling_section = "\n".join(struggling_lines) if struggling_lines else "No struggling tasks."
+
+    # Next 3 working days preview
+    next_days_lines: list[str] = []
+    try:
+        from backend.adaptive.services.adaptation_rules import get_next_working_day
+        check_date = today
+        for _ in range(3):
+            check_date = get_next_working_day(check_date)
+            tasks = db.get_tasks_for_date(uid, check_date)
+            pending = [t for t in tasks if t.status.value in ("pending", "partial")]
+            if pending:
+                names = " · ".join(t.title for t in pending[:3])
+                next_days_lines.append(f"{check_date.strftime('%a %d')}: {len(pending)} tasks — {names}")
+            else:
+                next_days_lines.append(f"{check_date.strftime('%a %d')}: No tasks scheduled")
+    except Exception:
+        pass
+    next_days_section = "\n".join(next_days_lines) if next_days_lines else "[unavailable]"
+
+    # Episodic memories section
+    episodic_lines: list[str] = []
+    try:
+        episodic = db.list_episodic_memories(uid, limit=5)
+        for em in episodic:
+            episodic_lines.append(f"- [{em.type}] {em.content}")
+    except Exception:
+        pass
+    episodic_section = "\n".join(episodic_lines) if episodic_lines else "No recent insights."
+
     # Current context
     active_tab = session.get("active_tab", "chat")
     context_lines = [f"Tab: {active_tab}"]
@@ -220,6 +262,12 @@ Done: {done_count}/{total_count} tasks
 {history_section}
 === WHAT YOU KNOW ABOUT THIS USER ===
 {memory_section}
+=== STRUGGLING TASKS ===
+{struggling_section}
+=== NEXT 3 WORKING DAYS ===
+{next_days_section}
+=== RECENT INSIGHTS ===
+{episodic_section}
 === CURRENT CONTEXT ===
 {context_section}
 === HOW TO RESPOND ===
