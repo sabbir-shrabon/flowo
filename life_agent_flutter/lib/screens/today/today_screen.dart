@@ -36,6 +36,8 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   bool _pullingExtraTasks = false;
   // True while a plan-adapt/update-triggered refresh is in progress.
   bool _adaptRefreshing = false;
+  // State for collapsed "Completed Today" section
+  bool _completedTasksExpanded = false;
 
   // Chat state
   List<_TodayChatMsg> _chatMessages = [];
@@ -304,6 +306,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   }
 
   Future<void> _handleCheckDone(String taskId) async {
+    // Check for day transition before processing action
+    final dayTransitioned = await _checkAndHandleDayTransition();
+    if (dayTransitioned) return; // Data refreshed, stop here
+
     setState(() => _actingTaskId = taskId);
 
     final original = _tasks.where((t) => t.id == taskId).firstOrNull;
@@ -414,6 +420,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   }
 
   Future<void> _handleUncheck(String taskId) async {
+    // Check for day transition before processing action
+    final dayTransitioned = await _checkAndHandleDayTransition();
+    if (dayTransitioned) return; // Data refreshed, stop here
+
     setState(() => _actingTaskId = taskId);
 
     final original = _tasks.where((t) => t.id == taskId).firstOrNull;
@@ -502,6 +512,28 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       }
     } finally {
       if (mounted) setState(() => _actingTaskId = null);
+    }
+  }
+
+  /// Check if working day has transitioned and handle refresh if needed.
+  /// Returns true if data was refreshed (caller should stop processing).
+  Future<bool> _checkAndHandleDayTransition() async {
+    try {
+      final freshSchedule = await getDailySchedule();
+      final workingDayMatches = _workingDayIndicesMatch(
+        _schedule,
+        freshSchedule.plansWorkingDay,
+      );
+
+      if (!workingDayMatches) {
+        // Day transition detected - refresh data
+        await _fetchData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      // If we can't check, assume no transition
+      return false;
     }
   }
 
@@ -1597,6 +1629,14 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     final hasInternetAsyncValue = ref.watch(connectivityProvider);
     final hasInternet = hasInternetAsyncValue.value ?? true;
 
+    // Separate active and completed tasks
+    final activeTasks = visibleTasks
+        .where((t) => t.status != TaskStatus.done)
+        .toList();
+    final completedTasks = visibleTasks
+        .where((t) => t.status == TaskStatus.done)
+        .toList();
+
     return CustomScrollView(
       slivers: [
         if (!hasInternet || _viewingOffline)
@@ -1636,24 +1676,29 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           ),
         ),
 
-        // Tasks grouped by plan
+        // Active tasks grouped by plan
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           sliver: SliverList(
             delegate: SliverChildBuilderDelegate((context, index) {
               final planId = sortedPlanIds[index];
               final plan = _schedule.plansMetadata[planId];
-              final tasks =
-                  visibleTasks.where((t) => t.planId == planId).toList()..sort(
+              final planActiveTasks =
+                  activeTasks.where((t) => t.planId == planId).toList()..sort(
                     (a, b) => (orderByTaskId[a.id] ?? 1 << 30).compareTo(
                       orderByTaskId[b.id] ?? 1 << 30,
                     ),
                   );
 
+              // Only show plan groups that have active tasks
+              if (planActiveTasks.isEmpty) {
+                return const SizedBox.shrink();
+              }
+
               return _PlanTaskGroup(
                 planTitle: plan?.title ?? 'Tasks',
                 milestonesMetadata: _schedule.milestonesMetadata,
-                tasks: tasks,
+                tasks: planActiveTasks,
                 orderByTaskId: orderByTaskId,
                 actingTaskId: _actingTaskId,
                 onCheckDone: _handleCheckDone,
@@ -1664,12 +1709,98 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           ),
         ),
 
+        // Completed Today section (collapsible)
+        if (completedTasks.isNotEmpty)
+          SliverToBoxAdapter(
+            child: _buildCompletedTasksSection(completedTasks, orderByTaskId),
+          ),
+
         if (dayComplete)
           SliverToBoxAdapter(child: _buildDayCompleteContent(firstName)),
 
         // Bottom padding
         const SliverToBoxAdapter(child: SizedBox(height: 40)),
       ],
+    );
+  }
+
+  Widget _buildCompletedTasksSection(
+    List<TaskResponse> completedTasks,
+    Map<String, int> orderByTaskId,
+  ) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        color: context.colors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: context.colors.border, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header with toggle
+          InkWell(
+            onTap: () => setState(
+              () => _completedTasksExpanded = !_completedTasksExpanded,
+            ),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(
+                    _completedTasksExpanded
+                        ? Icons.expand_less
+                        : Icons.expand_more,
+                    color: context.colors.textSecondary,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Completed Today (${completedTasks.length})',
+                    style: TextStyle(
+                      color: context.colors.textSecondary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    'Tap to ${_completedTasksExpanded ? 'collapse' : 'expand'}',
+                    style: TextStyle(
+                      color: context.colors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Completed tasks list (expandable)
+          if (_completedTasksExpanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                children: completedTasks
+                    .map(
+                      (task) => _TaskRow(
+                        task: task,
+                        isActing: _actingTaskId == task.id,
+                        onCheck: () {
+                          if (task.status == TaskStatus.done) {
+                            _handleUncheck(task.id);
+                          } else {
+                            _handleCheckDone(task.id);
+                          }
+                        },
+                        onTap: () => _handleChatTaskTap(task),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -1837,25 +1968,52 @@ class _TaskRow extends StatelessWidget {
 
             const SizedBox(width: 8),
 
-            // Task title
+            // Task title with rollover indicator
             Expanded(
-              child: AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 200),
-                style: TextStyle(
-                  color: isDone
-                      ? context.colors.textMuted
-                      : context.colors.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  decoration: isDone ? TextDecoration.lineThrough : null,
-                  decorationColor: context.colors.textMuted,
-                  decorationThickness: 2,
-                ),
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: isDone ? 0.6 : 1.0,
-                  child: Text(task.title),
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Rollover indicator
+                  if (task.rescheduledFrom != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      margin: const EdgeInsets.only(bottom: 4),
+                      decoration: BoxDecoration(
+                        color: context.colors.accent.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'Rescheduled from ${task.rescheduledFrom}',
+                        style: TextStyle(
+                          color: context.colors.accent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  // Task title
+                  AnimatedDefaultTextStyle(
+                    duration: const Duration(milliseconds: 200),
+                    style: TextStyle(
+                      color: isDone
+                          ? context.colors.textMuted
+                          : context.colors.textPrimary,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      decoration: isDone ? TextDecoration.lineThrough : null,
+                      decorationColor: context.colors.textMuted,
+                      decorationThickness: 2,
+                    ),
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 200),
+                      opacity: isDone ? 0.6 : 1.0,
+                      child: Text(task.title),
+                    ),
+                  ),
+                ],
               ),
             ),
 
