@@ -87,36 +87,68 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         ? await ConnectivityService().hasInternet()
         : await ref.read(connectivityProvider.future).catchError((_) => true);
 
-    // 1. Load the last backend decision from cache first.
+    // THE ONE RULE: Check working day index against cache FIRST.
+    // If index matches cache, return cache immediately.
+    // If index differs, clear cache and fetch fresh.
     final cachedSchedule = cache.getCachedDailySchedule(userId);
-    if (cachedSchedule != null) {
-      if (mounted) {
-        setState(() {
-          _schedule = cachedSchedule;
-          _tasks = cachedSchedule.tasks;
-          _loading = false;
-          _viewingOffline = false;
-        });
-      }
-    } else {
-      if (mounted) {
-        setState(() {
-          _loading = true;
-          _error = null;
-        });
-      }
-    }
 
-    // 2. Fetch from network if online
+    // If offline and we have cache, use it
     if (!hasInternet) {
-      if (mounted) {
-        setState(() => _viewingOffline = cachedSchedule != null);
+      if (cachedSchedule != null) {
+        if (mounted) {
+          setState(() {
+            _schedule = cachedSchedule;
+            _tasks = cachedSchedule.tasks;
+            _loading = false;
+            _viewingOffline = true;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _error = 'No cached data available offline';
+            _viewingOffline = false;
+          });
+        }
       }
       return;
     }
 
+    // Fetch fresh schedule to get current working day indices
     try {
       final freshSchedule = await getDailySchedule();
+
+      // Check if working day indices match cache
+      final workingDayMatches = _workingDayIndicesMatch(
+        cachedSchedule,
+        freshSchedule.plansWorkingDay,
+      );
+
+      // If working day matches and we have cache, use cache (the one rule)
+      if (workingDayMatches && cachedSchedule != null) {
+        // Merge done tasks from cache into the cached schedule
+        final today = DateTime.now();
+        final todayStr =
+            '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+
+        if (cachedSchedule.date == todayStr) {
+          if (mounted) {
+            setState(() {
+              _schedule = cachedSchedule;
+              _tasks = cachedSchedule.tasks;
+              _loading = false;
+              _viewingOffline = false;
+            });
+          }
+          return; // Cache is valid, stop here
+        }
+      }
+
+      // Working day changed or no cache — clear and use fresh data
+      if (cachedSchedule != null && !workingDayMatches) {
+        cache.clearDailySchedule(userId);
+      }
 
       // Keep done tasks visible for the entire calendar day.
       // The backend's /scheduler/daily only returns pending/upcoming tasks,
@@ -127,7 +159,9 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
 
       List<TaskResponse> mergedTasks = freshSchedule.tasks;
-      if (cachedSchedule != null && cachedSchedule.date == todayStr) {
+      if (cachedSchedule != null &&
+          cachedSchedule.date == todayStr &&
+          workingDayMatches) {
         final freshIds = {for (final t in freshSchedule.tasks) t.id};
         final doneTodayFromCache = cachedSchedule.tasks
             .where(
@@ -159,6 +193,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         plansMetadata: freshSchedule.plansMetadata,
         milestonesMetadata: freshSchedule.milestonesMetadata,
         metadata: freshSchedule.metadata,
+        plansWorkingDay: freshSchedule.plansWorkingDay,
       );
       await cache.saveDailySchedule(userId, mergedSchedule);
 
@@ -181,6 +216,23 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         });
       }
     }
+  }
+
+  /// Check if cached working day indices match the fresh indices.
+  /// This is the key to detecting day transitions.
+  bool _workingDayIndicesMatch(
+    DailySchedule? cached,
+    Map<String, int> freshWorkingDay,
+  ) {
+    if (cached == null) return false;
+    if (cached.plansWorkingDay.isEmpty && freshWorkingDay.isEmpty) return true;
+    if (cached.plansWorkingDay.length != freshWorkingDay.length) return false;
+
+    for (final entry in freshWorkingDay.entries) {
+      final cachedValue = cached.plansWorkingDay[entry.key];
+      if (cachedValue != entry.value) return false;
+    }
+    return true;
   }
 
   /// Hard refresh: forces a network fetch by clearing the stale cache,
@@ -236,6 +288,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           plansMetadata: _schedule.plansMetadata,
           milestonesMetadata: _schedule.milestonesMetadata,
           metadata: _schedule.metadata,
+          plansWorkingDay: _schedule.plansWorkingDay,
         );
         if (user != null) {
           await ref
@@ -270,6 +323,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       plansMetadata: _schedule.plansMetadata,
       milestonesMetadata: _schedule.milestonesMetadata,
       metadata: _schedule.metadata,
+      plansWorkingDay: _schedule.plansWorkingDay,
     );
 
     setState(() {
@@ -339,6 +393,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           plansMetadata: _schedule.plansMetadata,
           milestonesMetadata: _schedule.milestonesMetadata,
           metadata: _schedule.metadata,
+          plansWorkingDay: _schedule.plansWorkingDay,
         );
 
         setState(() {
@@ -380,6 +435,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       plansMetadata: _schedule.plansMetadata,
       milestonesMetadata: _schedule.milestonesMetadata,
       metadata: _schedule.metadata,
+      plansWorkingDay: _schedule.plansWorkingDay,
     );
 
     setState(() {
@@ -429,6 +485,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           plansMetadata: _schedule.plansMetadata,
           milestonesMetadata: _schedule.milestonesMetadata,
           metadata: _schedule.metadata,
+          plansWorkingDay: _schedule.plansWorkingDay,
         );
 
         setState(() {
@@ -625,8 +682,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       });
       _scrollChatToBottom();
 
-
-
       if (res.actions.isNotEmpty) {
         await Future.delayed(const Duration(milliseconds: 500));
         await _fetchData();
@@ -747,7 +802,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
 
     // When a plan is adapted/updated from any screen, do a hard refresh
     // and immediately show the loading spinner so the user sees progress.
-    ref.listen<int>(todayAdaptRefreshProvider, (_, _) => _fetchDataAfterAdapt());
+    ref.listen<int>(
+      todayAdaptRefreshProvider,
+      (_, _) => _fetchDataAfterAdapt(),
+    );
 
     ref.listen(authProvider.select((s) => s.status), (prev, next) {
       if (prev != AuthStatus.authenticated &&
@@ -960,7 +1018,9 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                               decoration: TextDecoration.underline,
-                              decorationColor: Colors.white.withValues(alpha: 0.7),
+                              decorationColor: Colors.white.withValues(
+                                alpha: 0.7,
+                              ),
                             ),
                           ),
                         ],

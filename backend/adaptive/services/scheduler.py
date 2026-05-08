@@ -189,9 +189,15 @@ class SchedulerService:
 
             plan_selection: list[TaskRow] = []
             if tasks_per_day > 0:
-                for task in rollover + fresh:
-                    if len(plan_selection) >= tasks_per_day:
-                        break
+                # Cap rollover at 3 per-plan to prevent overwhelming the user
+                max_rollover = min(3, len(rollover))
+                rollover_capped = rollover[:max_rollover]
+                
+                # Fill remaining slots with fresh tasks
+                remaining_slots = tasks_per_day - len(rollover_capped)
+                fresh_capped = fresh[:max(0, remaining_slots)]
+                
+                for task in rollover_capped + fresh_capped:
                     plan_selection.append(task)
                     total_available += 1
 

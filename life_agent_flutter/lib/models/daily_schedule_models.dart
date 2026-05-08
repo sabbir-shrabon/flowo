@@ -6,12 +6,7 @@ class PlanSummary {
   final String? priority;
   final String? status;
 
-  const PlanSummary({
-    required this.id,
-    this.title,
-    this.priority,
-    this.status,
-  });
+  const PlanSummary({required this.id, this.title, this.priority, this.status});
 
   factory PlanSummary.fromJson(Map<String, dynamic> json) {
     return PlanSummary(
@@ -23,12 +18,7 @@ class PlanSummary {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'priority': priority,
-      'status': status,
-    };
+    return {'id': id, 'title': title, 'priority': priority, 'status': status};
   }
 }
 
@@ -79,6 +69,10 @@ class DailySchedule {
   final Map<String, MilestoneSummary> milestonesMetadata;
   final Map<String, dynamic> metadata;
 
+  /// Working day index per plan (plan_id -> working_day_number).
+  /// Used to detect day transitions for cache invalidation.
+  final Map<String, int> plansWorkingDay;
+
   const DailySchedule({
     required this.date,
     required this.tasks,
@@ -89,6 +83,7 @@ class DailySchedule {
     required this.plansMetadata,
     required this.milestonesMetadata,
     required this.metadata,
+    required this.plansWorkingDay,
   });
 
   factory DailySchedule.empty() {
@@ -102,6 +97,7 @@ class DailySchedule {
       plansMetadata: {},
       milestonesMetadata: {},
       metadata: {},
+      plansWorkingDay: {},
     );
   }
 
@@ -113,10 +109,22 @@ class DailySchedule {
       json['milestones_metadata'] as Map? ?? const {},
     );
 
+    // Parse plans_working_day from metadata or top-level
+    final metadataRaw = Map<String, dynamic>.from(
+      json['metadata'] as Map? ?? const {},
+    );
+    final plansWorkingDayRaw = Map<String, dynamic>.from(
+      json['plans_working_day'] as Map? ??
+          metadataRaw['plans_working_day'] as Map? ??
+          const {},
+    );
+
     return DailySchedule(
       date: json['date'] as String? ?? '',
       tasks: (json['tasks'] as List? ?? const [])
-          .map((t) => TaskResponse.fromJson(Map<String, dynamic>.from(t as Map)))
+          .map(
+            (t) => TaskResponse.fromJson(Map<String, dynamic>.from(t as Map)),
+          )
           .toList(),
       totalAvailable: json['total_available'] as int? ?? 0,
       selectedCount: json['selected_count'] as int? ?? 0,
@@ -136,7 +144,10 @@ class DailySchedule {
           MilestoneSummary.fromJson(Map<String, dynamic>.from(value as Map)),
         ),
       ),
-      metadata: Map<String, dynamic>.from(json['metadata'] as Map? ?? const {}),
+      metadata: metadataRaw,
+      plansWorkingDay: plansWorkingDayRaw.map(
+        (key, value) => MapEntry(key, (value as num?)?.toInt() ?? 0),
+      ),
     );
   }
 
@@ -155,6 +166,7 @@ class DailySchedule {
         (key, value) => MapEntry(key, value.toJson()),
       ),
       'metadata': metadata,
+      'plans_working_day': plansWorkingDay,
     };
   }
 }
