@@ -1,5 +1,7 @@
---- Step 12: Daily Quota Lock
---- Stores the first Today-screen task decision for each user/date.
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Step 12: Daily Quota Lock
+-- Stores the first Today-screen task decision for each user/date.
+-- ═══════════════════════════════════════════════════════════════════════════════
 
 CREATE TABLE IF NOT EXISTS daily_task_batches (
     id              uuid primary key default gen_random_uuid(),
@@ -17,10 +19,16 @@ CREATE TABLE IF NOT EXISTS daily_task_batches (
 CREATE INDEX IF NOT EXISTS idx_daily_task_batches_user_date
     ON daily_task_batches(user_id, date);
 
-DROP TRIGGER IF EXISTS daily_task_batches_updated_at ON daily_task_batches;
-CREATE TRIGGER daily_task_batches_updated_at
-    BEFORE UPDATE ON daily_task_batches
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Only create trigger if the function exists (defined in 01_extensions_and_helpers.sql)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column') THEN
+        DROP TRIGGER IF EXISTS daily_task_batches_updated_at ON daily_task_batches;
+        CREATE TRIGGER daily_task_batches_updated_at
+            BEFORE UPDATE ON daily_task_batches
+            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 ALTER TABLE daily_task_batches ENABLE ROW LEVEL SECURITY;
 

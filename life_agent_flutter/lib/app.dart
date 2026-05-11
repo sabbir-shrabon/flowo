@@ -11,6 +11,7 @@ import 'screens/plans/plans_screen.dart';
 import 'screens/plans/plan_roadmap_screen.dart';
 import 'screens/plans/milestone_insight_screen.dart';
 import 'screens/task_detail/task_detail_screen.dart';
+import 'screens/history/history_screen.dart';
 import 'theme/app_theme.dart';
 
 /// GlobalKey for the root navigator — used by GoRouter.
@@ -22,7 +23,9 @@ final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.light);
 enum AppAccentColor { green, blue, ash }
 
 // ── Accent color provider ──
-final accentColorProvider = StateProvider<AppAccentColor>((ref) => AppAccentColor.green);
+final accentColorProvider = StateProvider<AppAccentColor>(
+  (ref) => AppAccentColor.green,
+);
 
 // ── Font size provider (12–20; default 14) ──
 final fontSizeProvider = StateProvider<double>((ref) => 14.0);
@@ -90,6 +93,11 @@ GoRouter _createRouter(Ref ref) {
           ),
         ],
       ),
+      // History screen (outside shell, accessed from drawer)
+      GoRoute(
+        path: '/history',
+        builder: (context, state) => const HistoryScreen(),
+      ),
     ],
   );
 }
@@ -124,12 +132,12 @@ class LifeAgentApp extends ConsumerWidget {
       routerConfig: router,
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
-        // Apply the font scaler inside MaterialApp so it inherits 
+        // Apply the font scaler inside MaterialApp so it inherits
         // correct screen size/padding while overriding the text scaler.
         return MediaQuery(
-          data: MediaQuery.of(context).copyWith(
-            textScaler: TextScaler.linear(textScaleFactor),
-          ),
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScaleFactor)),
           child: child!,
         );
       },

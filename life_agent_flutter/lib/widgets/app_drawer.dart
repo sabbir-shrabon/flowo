@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import '../models/chat_models.dart';
 import '../models/plan_models.dart';
+import '../models/history_models.dart';
 import '../providers/auth_provider.dart';
 import '../providers/navigation_provider.dart';
 import '../widgets/auth_modal.dart';
 import '../services/adaptive_service.dart';
-import '../services/api_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/adapt_with_plan_popup.dart';
 import '../widgets/plan_settings_dialog.dart';
@@ -25,17 +24,14 @@ class AppDrawer extends ConsumerStatefulWidget {
 }
 
 class _AppDrawerState extends ConsumerState<AppDrawer> {
-  List<ConversationSummary> _conversations = [];
   List<PlanResponse> _plans = [];
-  bool _historyOpen = false;      // lazy: collapsed by default
-  bool _activePlansOpen = true;   // expanded by default
-  bool _plansMenuOpen = true;     // expanded by default
-  bool _conversationsLoaded = false; // track if conversations fetched
-  String? _contextMenuConvId;
+  List<HistoryPlanGroup> _historyGroups = [];
+  bool _historyOpen = false; // lazy: collapsed by default
+  bool _activePlansOpen = true; // expanded by default
+  bool _plansMenuOpen = true; // expanded by default
+  bool _historyLoaded = false; // track if history fetched
   String? _contextMenuPlanId;
-  String? _renamingConvId;
   String? _renamingPlanId;
-  final _renameController = TextEditingController();
   final _planRenameController = TextEditingController();
 
   @override
@@ -48,7 +44,6 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
 
   @override
   void dispose() {
-    _renameController.dispose();
     _planRenameController.dispose();
     super.dispose();
   }
@@ -60,12 +55,13 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
       if (mounted) {
         setState(() {
           _plans = [];
+          _historyGroups = [];
         });
       }
       return;
     }
     try {
-      // Always load plans; conversations loaded lazily when history expanded
+      // Always load plans; history loaded lazily when expanded
       final plans = await listActivePlans();
       ref.read(activePlansCacheProvider.notifier).state = plans;
       if (mounted) {
@@ -76,14 +72,14 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
     } catch (_) {}
   }
 
-  Future<void> _fetchConversations() async {
-    if (_conversationsLoaded) return;
+  Future<void> _fetchHistory() async {
+    if (_historyLoaded) return;
     try {
-      final convs = await listConversations();
+      final response = await getTaskHistory(limit: 50);
       if (mounted) {
         setState(() {
-          _conversations = convs.where((c) => c.archived != true).toList();
-          _conversationsLoaded = true;
+          _historyGroups = groupHistoryForDisplay(response.history);
+          _historyLoaded = true;
         });
       }
     } catch (_) {}
@@ -96,80 +92,11 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
     context.go(location);
   }
 
-  // ── Conversation helpers ──────────────────────────────────────────────────
-
-  void _handleConversationTap(String convId) {
-    if (_renamingConvId != null) return;
-    _closeContextMenus();
-    ref.read(conversationToLoadProvider.notifier).state = convId;
+  void _openHistoryScreen() {
     if (!widget.isPermanent) {
       Navigator.pop(context);
     }
-    context.go('/chat');
-  }
-
-  void _handleRenameConv(String convId) {
-    _closeContextMenus();
-    final conv = _conversations.where((c) => c.id == convId).firstOrNull;
-    if (conv == null) return;
-    setState(() {
-      _renamingConvId = convId;
-      _renameController.text = conv.title;
-    });
-  }
-
-  Future<void> _submitRenameConv(String convId) async {
-    final newTitle = _renameController.text.trim();
-    if (newTitle.isEmpty) {
-      setState(() {
-        _renamingConvId = null;
-      });
-      return;
-    }
-    try {
-      await renameConversation(convId, newTitle);
-      setState(() {
-        _conversations = _conversations
-            .map(
-              (c) => c.id == convId
-                  ? ConversationSummary(
-                      id: c.id,
-                      title: newTitle,
-                      preview: c.preview,
-                      messageCount: c.messageCount,
-                      archived: c.archived,
-                      updatedAt: c.updatedAt,
-                    )
-                  : c,
-            )
-            .toList();
-      });
-    } catch (_) {}
-    setState(() {
-      _renamingConvId = null;
-    });
-  }
-
-  Future<void> _handleDeleteConv(String convId) async {
-    _closeContextMenus();
-    try {
-      await deleteConversation(convId);
-      setState(() {
-        _conversations = _conversations.where((c) => c.id != convId).toList();
-      });
-      ref.read(conversationsRefreshProvider.notifier).state++;
-    } catch (_) {}
-  }
-
-  Future<void> _handleArchiveConv(String convId) async {
-    _closeContextMenus();
-    try {
-      final api = ApiService();
-      await api.patchJson('/api/conversations/$convId', {'archived': true});
-      setState(() {
-        _conversations = _conversations.where((c) => c.id != convId).toList();
-      });
-    } catch (_) {}
+    context.push('/history');
   }
 
   // ── Plan helpers ──────────────────────────────────────────────────────────
@@ -309,45 +236,19 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
 
   void _closeContextMenus() {
     setState(() {
-      _contextMenuConvId = null;
       _contextMenuPlanId = null;
     });
   }
 
-  // ── Group conversations by date ───────────────────────────────────────────
+  // ── History helpers ───────────────────────────────────────────────────────
 
-  List<_ConversationGroup> _groupConversations() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final weekAgo = today.subtract(const Duration(days: 7));
-
-    final groups = [
-      _ConversationGroup(label: 'Today', items: []),
-      _ConversationGroup(label: 'Yesterday', items: []),
-      _ConversationGroup(label: 'Previous 7 days', items: []),
-      _ConversationGroup(label: 'Older', items: []),
-    ];
-
-    for (final conv in _conversations) {
-      final updated = conv.updatedAt != null
-          ? DateTime.tryParse(conv.updatedAt!) ?? now
-          : now;
-      final dateOnly = DateTime(updated.year, updated.month, updated.day);
-      if (dateOnly.isAtSameMomentAs(today) || dateOnly.isAfter(today)) {
-        groups[0].items.add(conv);
-      } else if (dateOnly.isAtSameMomentAs(yesterday) ||
-          dateOnly.isAfter(yesterday)) {
-        groups[1].items.add(conv);
-      } else if (dateOnly.isAfter(weekAgo) ||
-          dateOnly.isAtSameMomentAs(weekAgo)) {
-        groups[2].items.add(conv);
-      } else {
-        groups[3].items.add(conv);
-      }
-    }
-
-    return groups.where((g) => g.items.isNotEmpty).toList();
+  String _formatHistoryTime(String timestamp) {
+    final dt = DateTime.tryParse(timestamp);
+    if (dt == null) return '';
+    final hour = dt.hour > 12 ? dt.hour - 12 : dt.hour;
+    final minute = dt.minute.toString().padLeft(2, '0');
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    return '$hour:$minute $ampm';
   }
 
   Color _planColor(int index) {
@@ -585,8 +486,9 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                           size: 18,
                           color: context.colors.textMuted,
                         ),
-                        onTap: () =>
-                            setState(() => _activePlansOpen = !_activePlansOpen),
+                        onTap: () => setState(
+                          () => _activePlansOpen = !_activePlansOpen,
+                        ),
                       ),
 
                       if (_activePlansOpen)
@@ -693,156 +595,207 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-                        trailing: Icon(
-                          _historyOpen ? Icons.expand_less : Icons.expand_more,
-                          size: 18,
-                          color: context.colors.textMuted,
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (_historyGroups.isNotEmpty)
+                              Text(
+                                '${_historyGroups.fold(0, (sum, g) => sum + g.dateGroups.fold(0, (s, dg) => s + dg.entries.length))}',
+                                style: TextStyle(
+                                  color: context.colors.textMuted,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              _historyOpen
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              size: 18,
+                              color: context.colors.textMuted,
+                            ),
+                          ],
                         ),
                         onTap: () {
                           setState(() => _historyOpen = !_historyOpen);
-                          if (_historyOpen) _fetchConversations();
+                          if (_historyOpen) _fetchHistory();
                         },
                       ),
 
                       if (_historyOpen) ...[
-                        if (_conversations.isEmpty)
+                        if (_historyGroups.isEmpty)
                           Padding(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 8,
                             ),
                             child: Text(
-                              'No conversations yet',
+                              'No completed tasks yet',
                               style: TextStyle(
                                 color: context.colors.textMuted,
                                 fontSize: 12,
                               ),
                             ),
-                          ),
-                        ..._groupConversations().expand(
-                          (group) => [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
-                              child: Text(
-                                group.label,
-                                style: TextStyle(
-                                  color: context.colors.textMuted,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            ...group.items.map((conv) {
-                              final isRenaming = _renamingConvId == conv.id;
-                              final showMenu = _contextMenuConvId == conv.id;
-
-                              return Column(
-                                children: [
-                                  if (isRenaming)
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 2,
-                                      ),
-                                      child: TextField(
-                                        controller: _renameController,
-                                        style: TextStyle(
-                                          color: context.colors.textPrimary,
-                                          fontSize: 13,
-                                        ),
-                                        decoration: const InputDecoration(
-                                          isDense: true,
-                                          contentPadding: EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                        ),
-                                        autofocus: true,
-                                        onSubmitted: (_) =>
-                                            _submitRenameConv(conv.id),
-                                      ),
-                                    )
-                                  else
-                                    ListTile(
-                                      dense: true,
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 16,
-                                          ),
-                                      title: Text(
-                                        conv.title,
-                                        style: TextStyle(
-                                          color: context.colors.textSecondary,
-                                          fontSize: 13,
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      trailing: SizedBox(
-                                        width: 28,
-                                        height: 28,
-                                        child: IconButton(
-                                          padding: EdgeInsets.zero,
-                                          icon: Icon(
-                                            Icons.more_horiz,
-                                            size: 16,
-                                            color: context.colors.textMuted,
-                                          ),
-                                          onPressed: () {
-                                            _closeContextMenus();
-                                            setState(
-                                              () =>
-                                                  _contextMenuConvId = conv.id,
-                                            );
-                                          },
-                                        ),
-                                      ),
-                                      onTap: () =>
-                                          _handleConversationTap(conv.id),
+                          )
+                        else
+                          ..._historyGroups
+                              .take(3)
+                              .expand(
+                                (planGroup) => [
+                                  // Plan header with color indicator
+                                  Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      20,
+                                      10,
+                                      16,
+                                      4,
                                     ),
-                                  if (showMenu)
-                                    Container(
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: context.colors.elevated,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                          color: context.colors.border,
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 8,
+                                          height: 8,
+                                          decoration: BoxDecoration(
+                                            color: _planColor(
+                                              _plans.indexWhere(
+                                                (p) => p.id == planGroup.planId,
+                                              ),
+                                            ),
+                                            shape: BoxShape.circle,
+                                          ),
                                         ),
-                                      ),
-                                      child: Column(
-                                        children: [
-                                          _menuItem(
-                                            'Rename',
-                                            () => _handleRenameConv(conv.id),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Text(
+                                            planGroup.planName,
+                                            style: TextStyle(
+                                              color:
+                                                  context.colors.textSecondary,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
-                                          _menuItem(
-                                            'Archive',
-                                            () => _handleArchiveConv(conv.id),
+                                        ),
+                                        if (planGroup.planCompleted)
+                                          Icon(
+                                            Icons.check_circle_outline,
+                                            size: 14,
+                                            color: context.colors.success,
                                           ),
-                                          _menuItem(
-                                            'Delete',
-                                            () => _handleDeleteConv(conv.id),
-                                            destructive: true,
+                                      ],
+                                    ),
+                                  ),
+                                  // Recent entries for this plan
+                                  ...planGroup.dateGroups
+                                      .take(2)
+                                      .expand(
+                                        (dateGroup) => [
+                                          // Date label
+                                          Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              36,
+                                              6,
+                                              16,
+                                              2,
+                                            ),
+                                            child: Text(
+                                              dateGroup.dateLabel,
+                                              style: TextStyle(
+                                                color: context.colors.textMuted,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
                                           ),
+                                          // Task entries (show max 2 per date)
+                                          ...dateGroup.entries
+                                              .take(2)
+                                              .map(
+                                                (entry) => Padding(
+                                                  padding:
+                                                      const EdgeInsets.fromLTRB(
+                                                        36,
+                                                        2,
+                                                        16,
+                                                        2,
+                                                      ),
+                                                  child: Row(
+                                                    children: [
+                                                      Icon(
+                                                        Icons.check,
+                                                        size: 12,
+                                                        color: context
+                                                            .colors
+                                                            .success,
+                                                      ),
+                                                      const SizedBox(width: 6),
+                                                      Expanded(
+                                                        child: Text(
+                                                          entry.taskName,
+                                                          style: TextStyle(
+                                                            color: context
+                                                                .colors
+                                                                .textSecondary,
+                                                            fontSize: 12,
+                                                          ),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                      ),
+                                                      Text(
+                                                        _formatHistoryTime(
+                                                          entry.completedAt,
+                                                        ),
+                                                        style: TextStyle(
+                                                          color: context
+                                                              .colors
+                                                              .textMuted,
+                                                          fontSize: 10,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
                                         ],
                                       ),
-                                    ),
                                 ],
-                              );
-                            }),
-                          ],
-                        ),
+                              ),
+                        // "View all" button
+                        if (_historyGroups.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            child: TextButton(
+                              onPressed: _openHistoryScreen,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'View all history',
+                                    style: TextStyle(
+                                      color: context.colors.accent,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 12,
+                                    color: context.colors.accent,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                       ],
                     ],
                   ),
-
-
 
                 // Footer: User section or Sign-in prompt
                 Container(
@@ -992,36 +945,4 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
       onTap: onTap,
     );
   }
-
-  Widget _menuItem(
-    String label,
-    VoidCallback onTap, {
-    bool destructive = false,
-  }) {
-    return InkWell(
-      onTap: () {
-        _closeContextMenus();
-        onTap();
-      },
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: destructive
-                ? context.colors.error
-                : context.colors.textSecondary,
-            fontSize: 13,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ConversationGroup {
-  final String label;
-  final List<ConversationSummary> items;
-  _ConversationGroup({required this.label, required this.items});
 }

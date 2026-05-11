@@ -55,6 +55,8 @@ from backend.adaptive.schemas import (
     PlanUpdateRequest,
     SkipRequest,
     TaskDetailResponse,
+    TaskHistoryListResponse,
+    TaskHistoryResponse,
     TaskResponse,
     TaskUpdateRequest,
     UserPreferencesResponse,
@@ -275,7 +277,8 @@ async def update_task_status(
             raise HTTPException(status_code=404, detail="Task not found")
 
         if payload.status == TaskStatus.pending:
-            # Undoing a task
+            # Undoing a task - delete history record if it exists
+            adaptive_store.delete_task_history(task.id)
             updated = adaptive_store.update_task_status(task.id, TaskStatus.pending)
             if updated is None:
                 raise HTTPException(status_code=500, detail="Failed to update task to pending")
@@ -299,6 +302,40 @@ async def update_task_status(
             event_type=event_type,
             feedback_text=payload.feedback_text,
         )
+
+        # Create history record when task is marked done
+        if payload.status == TaskStatus.done:
+            plan = adaptive_store.get_plan(task.plan_id)
+            milestone_name = None
+            if task.milestone_id:
+                milestones = adaptive_store.get_milestones_for_plan(user_id, task.plan_id)
+                for ms in milestones:
+                    if ms.id == task.milestone_id:
+                        milestone_name = ms.title
+                        break
+            # Get working_day_index from daily batch metadata if available
+            working_day_index = None
+            batch = adaptive_store.get_daily_task_batch(user_id, task.due_date or date.today())
+            if batch and batch.get("metadata"):
+                metadata = batch.get("metadata", {})
+                if isinstance(metadata, dict):
+                    plans_wd = metadata.get("plans_working_day", {})
+                    working_day_index = plans_wd.get(str(task.plan_id))
+            try:
+                adaptive_store.create_task_history(
+                    user_id=user_id,
+                    task_id=task.id,
+                    task_name=task.title,
+                    plan_id=task.plan_id,
+                    plan_name=plan.title if plan else "Untitled Plan",
+                    milestone_id=task.milestone_id,
+                    milestone_name=milestone_name,
+                    plan_completed=False,  # Will be updated if plan completes
+                    working_day_index=working_day_index,
+                    calendar_date=task.due_date,
+                )
+            except Exception as e:
+                logger.warning("Failed to create task history: %s", e)
 
         # Auto-adjustment: if skipped, reschedule to tomorrow
         if payload.status == TaskStatus.skipped:
@@ -2275,4 +2312,48 @@ def _suggestion_to_response(s) -> AdjustmentSuggestionResponse:
         status=s.status,
         created_at=s.created_at,
         resolved_at=s.resolved_at,
+    )
+
+
+# ── Task History ───────────────────────────────────────────────────────────────
+
+@router.get("/history", response_model=TaskHistoryListResponse)
+async def get_task_history(
+    plan_id: UUID | None = None,
+    search: str | None = None,
+    limit: int = 100,
+    user_id: UUID = Depends(get_current_user),
+):
+    """Get task completion history for the current user.
+
+    Results are ordered by completion time, most recent first.
+    Can be filtered by plan_id and search query.
+    """
+    history = adaptive_store.list_task_history(
+        user_id=user_id,
+        plan_id=plan_id,
+        search_query=search,
+        limit=limit,
+    )
+    return TaskHistoryListResponse(
+        history=[_history_to_response(h) for h in history],
+        total=len(history),
+    )
+
+
+def _history_to_response(h) -> TaskHistoryResponse:
+    return TaskHistoryResponse(
+        id=h.id,
+        user_id=h.user_id,
+        task_id=h.task_id,
+        task_name=h.task_name,
+        milestone_id=h.milestone_id,
+        milestone_name=h.milestone_name,
+        plan_id=h.plan_id,
+        plan_name=h.plan_name,
+        plan_completed=h.plan_completed,
+        working_day_index=h.working_day_index,
+        calendar_date=h.calendar_date,
+        completed_at=h.completed_at,
+        created_at=h.created_at,
     )

@@ -1552,16 +1552,6 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     );
   }
 
-  Widget _buildDayCompleteState(String firstName) {
-    return ListView(
-      padding: const EdgeInsets.all(32),
-      children: [
-        const SizedBox(height: 56),
-        _buildDayCompleteContent(firstName),
-      ],
-    );
-  }
-
   Widget _buildDayCompleteContent(String firstName) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -1926,6 +1916,15 @@ class _TaskRow extends StatelessWidget {
     required this.onTap,
   });
 
+  bool _isOverdue(String dueDate) {
+    final due = DateTime.tryParse(dueDate);
+    if (due == null) return false;
+    final today = DateTime.now();
+    final dueDay = DateTime(due.year, due.month, due.day);
+    final todayDay = DateTime(today.year, today.month, today.day);
+    return dueDay.isBefore(todayDay);
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDone = task.status == TaskStatus.done;
@@ -1973,8 +1972,11 @@ class _TaskRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Rollover indicator
-                  if (task.rescheduledFrom != null)
+                  // Rollover indicator - show for explicitly rescheduled OR overdue tasks
+                  if (task.rescheduledFrom != null ||
+                      (task.dueDate != null &&
+                          _isOverdue(task.dueDate!) &&
+                          !isDone))
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 6,
@@ -1986,7 +1988,7 @@ class _TaskRow extends StatelessWidget {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        'Rescheduled from ${task.rescheduledFrom}',
+                        'Rescheduled from ${task.rescheduledFrom ?? task.dueDate}',
                         style: TextStyle(
                           color: context.colors.accent,
                           fontSize: 10,

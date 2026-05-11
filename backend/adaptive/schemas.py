@@ -414,3 +414,27 @@ class EpisodicMemoryResponse(BaseModel):
     created_at: datetime
 
 
+# ── Task History ────────────────────────────────────────────────────────────────
+
+class TaskHistoryResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    task_id: UUID
+    task_name: str
+    milestone_id: UUID | None = None
+    milestone_name: str | None = None
+    plan_id: UUID
+    plan_name: str
+    plan_completed: bool = False
+    working_day_index: int | None = None
+    calendar_date: date
+    completed_at: datetime
+    created_at: datetime
+
+
+class TaskHistoryListResponse(BaseModel):
+    """Grouped task history response for the history screen."""
+    history: list[TaskHistoryResponse]
+    total: int
+
+

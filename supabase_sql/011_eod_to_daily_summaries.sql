@@ -1,15 +1,20 @@
---- Step 11: Rename EOD Summaries → Daily Summaries
---- Removes the old EOD naming convention in favor of the new trigger-based system.
---- The table is renamed from eod_summaries to daily_summaries.
---- ═══════════════════════════════════════════════════════════════════════════════
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Step 11: Rename EOD Summaries → Daily Summaries
+-- Removes the old EOD naming convention in favor of the new trigger-based system.
+-- The table is renamed from eod_summaries to daily_summaries.
+-- ═══════════════════════════════════════════════════════════════════════════════
 
--- Rename table
-ALTER TABLE eod_summaries RENAME TO daily_summaries;
+-- Rename table (only if old name exists)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'eod_summaries') THEN
+        ALTER TABLE eod_summaries RENAME TO daily_summaries;
+        -- Rename constraint
+        ALTER TABLE daily_summaries RENAME CONSTRAINT eod_summaries_user_date_unique TO daily_summaries_user_date_unique;
+    END IF;
+END $$;
 
--- Rename constraint
-ALTER TABLE daily_summaries RENAME CONSTRAINT eod_summaries_user_date_unique TO daily_summaries_user_date_unique;
-
--- Rename index
+-- Rename index (drop old, create new)
 DROP INDEX IF EXISTS idx_eod_summaries_user_date;
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_user_date ON daily_summaries(user_id, date);
 

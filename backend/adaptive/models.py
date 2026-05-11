@@ -201,3 +201,20 @@ class EpisodicMemoryRow(BaseModel):
     context_json: dict | None = None
     learned_rule: str | None = None
     created_at: datetime
+
+
+class TaskHistoryRow(BaseModel):
+    """Task completion history record - one row per completed task."""
+    id: UUID = Field(...)
+    user_id: UUID
+    task_id: UUID
+    task_name: str  # snapshot at completion time
+    milestone_id: UUID | None = None
+    milestone_name: str | None = None  # snapshot at completion time
+    plan_id: UUID
+    plan_name: str  # snapshot at completion time
+    plan_completed: bool = False  # true if plan was completed when this task was done
+    working_day_index: int | None = None
+    calendar_date: date
+    completed_at: datetime
+    created_at: datetime

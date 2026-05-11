@@ -4,6 +4,7 @@ import '../models/milestone_models.dart';
 import '../models/daily_schedule_models.dart';
 import '../models/memory_models.dart';
 import '../models/chat_models.dart';
+import '../models/history_models.dart';
 import 'api_service.dart';
 
 final _api = ApiService();
@@ -284,4 +285,127 @@ Future<ConversationSummary> renameConversation(String id, String title) async {
 
 Future<void> deleteConversation(String id) async {
   await _api.delete('/api/conversations/$id');
+}
+
+// ── Task History ───────────────────────────────────────────────────────────────
+
+Future<TaskHistoryListResponse> getTaskHistory({
+  String? planId,
+  String? search,
+  int limit = 100,
+}) async {
+  final queryParams = <String, String>{};
+  if (planId != null) queryParams['plan_id'] = planId;
+  if (search != null && search.isNotEmpty) queryParams['search'] = search;
+  queryParams['limit'] = limit.toString();
+
+  final queryString = queryParams.entries
+      .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+      .join('&');
+  final data = await _api.getJson('/api/adaptive/history?$queryString');
+  return TaskHistoryListResponse.fromJson(data as Map<String, dynamic>);
+}
+
+/// Groups history entries by plan, then by date, for display in the History Screen.
+List<HistoryPlanGroup> groupHistoryForDisplay(
+  List<TaskHistoryResponse> history,
+) {
+  if (history.isEmpty) return [];
+
+  // Group by plan first
+  final planGroups = <String, List<TaskHistoryResponse>>{};
+  for (final entry in history) {
+    planGroups.putIfAbsent(entry.planId, () => []).add(entry);
+  }
+
+  // Convert to HistoryPlanGroup objects
+  final result = <HistoryPlanGroup>[];
+  for (final planId in planGroups.keys) {
+    final entries = planGroups[planId]!;
+    final planName = entries.first.planName;
+    final planCompleted = entries.any((e) => e.planCompleted);
+
+    // Find most recent completion for sorting
+    final mostRecent = entries
+        .map((e) => DateTime.tryParse(e.completedAt) ?? DateTime.now())
+        .reduce((a, b) => a.isAfter(b) ? a : b);
+
+    // Group entries by date
+    final dateGroups = <String, List<TaskHistoryResponse>>{};
+    for (final entry in entries) {
+      dateGroups.putIfAbsent(entry.calendarDate, () => []).add(entry);
+    }
+
+    // Convert to HistoryDateGroup objects
+    final historyDateGroups = <HistoryDateGroup>[];
+    for (final dateStr in dateGroups.keys) {
+      final dateEntries = dateGroups[dateStr]!;
+      final dateLabel = _formatDateLabel(dateStr);
+      historyDateGroups.add(
+        HistoryDateGroup(
+          dateLabel: dateLabel,
+          calendarDate: dateStr,
+          entries: dateEntries,
+        ),
+      );
+    }
+
+    // Sort date groups by date descending
+    historyDateGroups.sort((a, b) => b.calendarDate.compareTo(a.calendarDate));
+
+    result.add(
+      HistoryPlanGroup(
+        planId: planId,
+        planName: planName,
+        planCompleted: planCompleted,
+        dateGroups: historyDateGroups,
+        mostRecentCompletion: mostRecent,
+      ),
+    );
+  }
+
+  // Sort plans by most recent completion (active plans first, completed plans last)
+  result.sort((a, b) {
+    // Completed plans go to the end
+    if (a.planCompleted != b.planCompleted) {
+      return a.planCompleted ? 1 : -1;
+    }
+    // Otherwise sort by most recent completion
+    return b.mostRecentCompletion.compareTo(a.mostRecentCompletion);
+  });
+
+  return result;
+}
+
+String _formatDateLabel(String dateStr) {
+  final date = DateTime.tryParse(dateStr);
+  if (date == null) return dateStr;
+
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final entryDate = DateTime(date.year, date.month, date.day);
+
+  if (entryDate == today) {
+    return 'Today';
+  } else if (entryDate == yesterday) {
+    return 'Yesterday';
+  } else {
+    // Format as "Mon DD, YYYY" or "DD Mon YYYY" based on locale
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
 }

@@ -22,6 +22,7 @@ from backend.adaptive.models import (
     PlanRow,
     PlanStatus,
     TaskDifficulty,
+    TaskHistoryRow,
     TaskRow,
     TaskStatus,
     UserPreferences,
@@ -1112,6 +1113,111 @@ class AdaptiveStore:
         if not res or not res[1]:
             return []
         return list(set(self._safe_uuid(row["user_id"]) for row in res[1]))
+
+    # ── Task History ─────────────────────────────────────────────────────────
+
+    def create_task_history(
+        self,
+        user_id: UUID,
+        task_id: UUID,
+        task_name: str,
+        plan_id: UUID,
+        plan_name: str,
+        milestone_id: UUID | None = None,
+        milestone_name: str | None = None,
+        plan_completed: bool = False,
+        working_day_index: int | None = None,
+        calendar_date: date | None = None,
+    ) -> TaskHistoryRow:
+        """Create a task history record when a task is marked done."""
+        from backend.adaptive.models import TaskHistoryRow
+        self.ensure_user(user_id)
+        now = datetime.now(timezone.utc)
+        data = {
+            "user_id": str(user_id),
+            "task_id": str(task_id),
+            "task_name": task_name,
+            "plan_id": str(plan_id),
+            "plan_name": plan_name,
+            "plan_completed": plan_completed,
+            "calendar_date": (calendar_date or date.today()).isoformat(),
+            "completed_at": now.isoformat().replace("+00:00", "Z"),
+        }
+        if milestone_id:
+            data["milestone_id"] = str(milestone_id)
+        if milestone_name:
+            data["milestone_name"] = milestone_name
+        if working_day_index is not None:
+            data["working_day_index"] = working_day_index
+        res = self.client.table("task_history").upsert(data, on_conflict="task_id").execute()
+        if not res or not res[1]:
+            raise RuntimeError(f"Failed to create task history")
+        return self._map_task_history(res[1][0])
+
+    def delete_task_history(self, task_id: UUID) -> bool:
+        """Delete a task history record when a task is unmarked (undone)."""
+        res = self.client.table("task_history").delete().eq("task_id", str(task_id)).execute()
+        return bool(res and res[1])
+
+    def list_task_history(
+        self,
+        user_id: UUID,
+        plan_id: UUID | None = None,
+        search_query: str | None = None,
+        limit: int = 100,
+    ) -> list[TaskHistoryRow]:
+        """List task history for a user, optionally filtered by plan and search query."""
+        from backend.adaptive.models import TaskHistoryRow
+        query = (
+            self.client.table("task_history")
+            .select()
+            .eq("user_id", str(user_id))
+            .order("completed_at", desc=True)
+            .limit(limit)
+        )
+        if plan_id:
+            query = query.eq("plan_id", str(plan_id))
+        res = query.execute()
+        if not res or not res[1]:
+            return []
+        history = [self._map_task_history(row) for row in res[1]]
+        # Filter by search query in Python (Supabase doesn't support ILIKE easily via REST)
+        if search_query:
+            search_lower = search_query.lower()
+            history = [h for h in history if search_lower in h.task_name.lower()]
+        return history
+
+    def get_task_history_for_task(self, task_id: UUID) -> TaskHistoryRow | None:
+        """Get the history record for a specific task, if it exists."""
+        res = self.client.table("task_history").select().eq("task_id", str(task_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_task_history(res[1][0])
+
+    def _map_task_history(self, row: dict) -> TaskHistoryRow:
+        from backend.adaptive.models import TaskHistoryRow
+        calendar_date_val = row.get("calendar_date")
+        calendar_date = None
+        if calendar_date_val:
+            try:
+                calendar_date = datetime.fromisoformat(str(calendar_date_val)).date()
+            except Exception:
+                pass
+        return TaskHistoryRow(
+            id=self._safe_uuid(row.get("id")),
+            user_id=self._safe_uuid(row.get("user_id")),
+            task_id=self._safe_uuid(row.get("task_id")),
+            task_name=row.get("task_name") or "",
+            milestone_id=self._safe_uuid(row.get("milestone_id")) if row.get("milestone_id") else None,
+            milestone_name=row.get("milestone_name"),
+            plan_id=self._safe_uuid(row.get("plan_id")),
+            plan_name=row.get("plan_name") or "",
+            plan_completed=row.get("plan_completed", False),
+            working_day_index=row.get("working_day_index"),
+            calendar_date=calendar_date or date.today(),
+            completed_at=self._safe_date(row.get("completed_at")),
+            created_at=self._safe_date(row.get("created_at")),
+        )
 
 
 adaptive_store = AdaptiveStore()
