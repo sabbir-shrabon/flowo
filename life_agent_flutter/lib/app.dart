@@ -38,6 +38,20 @@ GoRouter _createRouter(Ref ref) {
     navigatorKey: routerKey,
     initialLocation: '/today',
     refreshListenable: _AuthNotifierStream(ref),
+    redirect: (context, state) {
+      final authStatus = ref.read(authProvider).status;
+      final currentLocation = state.matchedLocation;
+
+      // After sign-in or sign-out, redirect to /today
+      // - unauthenticated: user just signed out, go to today (clean state)
+      // - authenticated but coming from non-app location (e.g., after sign-in)
+      if (authStatus == AuthStatus.unauthenticated &&
+          currentLocation != '/today') {
+        return '/today';
+      }
+
+      return null; // no redirect
+    },
     routes: [
       ShellRoute(
         builder: (context, state, child) => MainShell(child: child),

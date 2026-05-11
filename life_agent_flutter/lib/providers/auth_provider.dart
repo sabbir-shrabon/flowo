@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthState;
+import '../services/local_cache_service.dart';
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
 
@@ -68,6 +69,9 @@ class AuthNotifier extends StateNotifier<AppAuthState> {
   }
 
   Future<void> signOut() async {
+    // Clear all cached data BEFORE signing out to ensure
+    // fresh state for next user. This must be sequential.
+    await LocalCacheService.instance.clearAll();
     await _supabase.auth.signOut();
   }
 

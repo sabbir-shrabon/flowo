@@ -840,8 +840,25 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     );
 
     ref.listen(authProvider.select((s) => s.status), (prev, next) {
-      if (prev != AuthStatus.authenticated &&
-          next == AuthStatus.authenticated) {
+      // When user signs out, immediately clear UI state
+      // Cache is already cleared by signOut() before this fires
+      if (next == AuthStatus.unauthenticated) {
+        if (mounted) {
+          setState(() {
+            _schedule = DailySchedule.empty();
+            _tasks = [];
+            _loading = false;
+            _error = null;
+            _viewingOffline = false;
+          });
+        }
+        return;
+      }
+
+      // When user signs in (or re-authenticates), fetch fresh data
+      // Cache was cleared by signOut(), so this will go through
+      // the full working day index check and fetch from backend
+      if (next == AuthStatus.authenticated) {
         _fetchData();
       }
     });

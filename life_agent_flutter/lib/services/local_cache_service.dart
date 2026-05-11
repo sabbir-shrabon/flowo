@@ -255,4 +255,22 @@ class LocalCacheService {
       debugPrint('[CacheLayer] Error removing pending sync: $e');
     }
   }
+
+  // ── Clear All Cache (for sign-out) ───────────────────────────────────────────
+
+  /// Clears all cached data. Call this on sign-out to ensure
+  /// a fresh state for the next user (or same user re-authenticating).
+  Future<void> clearAll() async {
+    final startTime = DateTime.now();
+    try {
+      await _dailyScheduleBox.clear();
+      await _plansBox.clear();
+      await _taskDetailsBox.clear();
+      await _pendingSyncsBox.clear();
+      final duration = DateTime.now().difference(startTime).inMilliseconds;
+      debugPrint('[CacheLayer] Cleared all cache in ${duration}ms');
+    } catch (e) {
+      debugPrint('[CacheLayer] Error clearing all cache: $e');
+    }
+  }
 }

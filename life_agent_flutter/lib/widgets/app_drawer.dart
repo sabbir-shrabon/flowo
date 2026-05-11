@@ -272,8 +272,21 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
 
     // Refresh data when auth state changes
     ref.listen(authProvider.select((s) => s.status), (prev, next) {
-      if (prev != AuthStatus.authenticated &&
-          next == AuthStatus.authenticated) {
+      // When user signs out, immediately clear UI state
+      // Cache is already cleared by signOut() before this fires
+      if (next == AuthStatus.unauthenticated) {
+        if (mounted) {
+          setState(() {
+            _plans = [];
+            _historyGroups = [];
+            _historyLoaded = false;
+          });
+        }
+        return;
+      }
+
+      // When user signs in (or re-authenticates), fetch fresh data
+      if (next == AuthStatus.authenticated) {
         _fetchData();
       }
     });

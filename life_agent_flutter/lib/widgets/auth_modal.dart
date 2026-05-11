@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../providers/auth_provider.dart';
 import '../theme/app_theme.dart';
@@ -76,7 +77,11 @@ class _AuthModalDialogState extends ConsumerState<_AuthModalDialog> {
       } else {
         await supabase.signInWithPassword(email: email, password: password);
       }
-      if (mounted) Navigator.of(context).pop(true);
+      if (mounted) {
+        Navigator.of(context).pop(true);
+        // Navigate to today screen after successful sign-in
+        context.go('/today');
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _error = friendlyErrorMessage(e));

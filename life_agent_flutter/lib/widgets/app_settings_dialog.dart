@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
 import '../app.dart'
@@ -15,14 +16,11 @@ import '../app.dart'
 void showAppSettingsDialog(BuildContext context) {
   final isDesktop = MediaQuery.of(context).size.width >= 560;
   if (isDesktop) {
-    showDialog(
-      context: context,
-      builder: (_) => const AppSettingsDialog(),
-    );
+    showDialog(context: context, builder: (_) => const AppSettingsDialog());
   } else {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const AppSettingsMobileScreen()),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const AppSettingsMobileScreen()));
   }
 }
 
@@ -39,22 +37,22 @@ enum _SettingsSection {
 
 extension _SettingsSectionExt on _SettingsSection {
   String get label => switch (this) {
-        _SettingsSection.appearance => 'Appearance',
-        _SettingsSection.accentColor => 'Accent Color',
-        _SettingsSection.fontSize => 'Font Size',
-        _SettingsSection.dataControl => 'Data & Privacy',
-        _SettingsSection.upgrade => 'Upgrade',
-        _SettingsSection.logout => 'Logout',
-      };
+    _SettingsSection.appearance => 'Appearance',
+    _SettingsSection.accentColor => 'Accent Color',
+    _SettingsSection.fontSize => 'Font Size',
+    _SettingsSection.dataControl => 'Data & Privacy',
+    _SettingsSection.upgrade => 'Upgrade',
+    _SettingsSection.logout => 'Logout',
+  };
 
   IconData get icon => switch (this) {
-        _SettingsSection.appearance => Icons.palette_outlined,
-        _SettingsSection.accentColor => Icons.color_lens_outlined,
-        _SettingsSection.fontSize => Icons.text_fields,
-        _SettingsSection.dataControl => Icons.shield_outlined,
-        _SettingsSection.upgrade => Icons.star_outline,
-        _SettingsSection.logout => Icons.logout,
-      };
+    _SettingsSection.appearance => Icons.palette_outlined,
+    _SettingsSection.accentColor => Icons.color_lens_outlined,
+    _SettingsSection.fontSize => Icons.text_fields,
+    _SettingsSection.dataControl => Icons.shield_outlined,
+    _SettingsSection.upgrade => Icons.star_outline,
+    _SettingsSection.logout => Icons.logout,
+  };
 
   bool get isDestructive => this == _SettingsSection.logout;
 }
@@ -121,8 +119,7 @@ class _AppSettingsDialogState extends ConsumerState<AppSettingsDialog> {
       padding: const EdgeInsets.fromLTRB(28, 22, 18, 14),
       child: Row(
         children: [
-          Icon(Icons.settings_outlined,
-              size: 22, color: context.colors.accent),
+          Icon(Icons.settings_outlined, size: 22, color: context.colors.accent),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
@@ -183,8 +180,7 @@ class _AppSettingsDialogState extends ConsumerState<AppSettingsDialog> {
                   style: TextStyle(
                     color: fg,
                     fontSize: 14,
-                    fontWeight:
-                        selected ? FontWeight.w700 : FontWeight.w500,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
               ),
@@ -245,8 +241,10 @@ class _MobileSectionTile extends StatelessWidget {
     return Column(
       children: [
         ListTile(
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 4,
+          ),
           leading: Icon(section.icon, size: 22, color: fg),
           title: Text(
             section.label,
@@ -258,14 +256,16 @@ class _MobileSectionTile extends StatelessWidget {
           ),
           trailing: section.isDestructive
               ? null
-              : Icon(Icons.chevron_right,
-                  size: 20, color: context.colors.textMuted),
+              : Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: context.colors.textMuted,
+                ),
           onTap: () {
             Navigator.of(context).push(
               MaterialPageRoute(
-                builder: (_) => AppSettingsSectionScreen(
-                  sectionName: section.name,
-                ),
+                builder: (_) =>
+                    AppSettingsSectionScreen(sectionName: section.name),
               ),
             );
           },
@@ -288,9 +288,9 @@ class AppSettingsSectionScreen extends StatelessWidget {
   const AppSettingsSectionScreen({super.key, required this.sectionName});
 
   _SettingsSection get _section => _SettingsSection.values.firstWhere(
-        (s) => s.name == sectionName,
-        orElse: () => _SettingsSection.appearance,
-      );
+    (s) => s.name == sectionName,
+    orElse: () => _SettingsSection.appearance,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -363,8 +363,11 @@ class _AppearancePane extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Appearance',
-            'Choose how Life Agent looks on your device.'),
+        _sectionTitle(
+          context,
+          'Appearance',
+          'Choose how Life Agent looks on your device.',
+        ),
         const SizedBox(height: 24),
         Text(
           'Theme',
@@ -392,8 +395,8 @@ class _AppearancePane extends ConsumerWidget {
                 label: 'Dark',
                 icon: Icons.dark_mode_outlined,
                 selected: isDark,
-                onTap: () => ref.read(themeModeProvider.notifier).state =
-                    ThemeMode.dark,
+                onTap: () =>
+                    ref.read(themeModeProvider.notifier).state = ThemeMode.dark,
               ),
             ),
           ],
@@ -428,9 +431,7 @@ class _ThemeOptionCard extends StatelessWidget {
               : context.colors.background,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected
-                ? context.colors.accent
-                : context.colors.border,
+            color: selected ? context.colors.accent : context.colors.border,
             width: selected ? 2 : 1,
           ),
         ),
@@ -451,8 +452,7 @@ class _ThemeOptionCard extends StatelessWidget {
                     ? context.colors.accent
                     : context.colors.textSecondary,
                 fontSize: 14,
-                fontWeight:
-                    selected ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ],
@@ -470,9 +470,9 @@ class _AccentColorPane extends ConsumerWidget {
   const _AccentColorPane();
 
   static const _options = [
-    (value: AppAccentColor.green, label: 'Sage',  color: Color(0xFF3DD6B5)),
-    (value: AppAccentColor.blue,  label: 'Ocean', color: Color(0xFF5B9CF6)),
-    (value: AppAccentColor.ash,   label: 'Stone', color: Color(0xFF9B9B9B)),
+    (value: AppAccentColor.green, label: 'Sage', color: Color(0xFF3DD6B5)),
+    (value: AppAccentColor.blue, label: 'Ocean', color: Color(0xFF5B9CF6)),
+    (value: AppAccentColor.ash, label: 'Stone', color: Color(0xFF9B9B9B)),
   ];
 
   @override
@@ -482,8 +482,11 @@ class _AccentColorPane extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Accent Color',
-            'Choose the highlight color used throughout the app.'),
+        _sectionTitle(
+          context,
+          'Accent Color',
+          'Choose the highlight color used throughout the app.',
+        ),
         const SizedBox(height: 28),
 
         // Three swatches
@@ -531,9 +534,12 @@ class _AccentColorPane extends ConsumerWidget {
               Row(
                 children: [
                   Container(
-                    width: 8, height: 8,
+                    width: 8,
+                    height: 8,
                     decoration: BoxDecoration(
-                      color: context.colors.accent, shape: BoxShape.circle),
+                      color: context.colors.accent,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -551,10 +557,12 @@ class _AccentColorPane extends ConsumerWidget {
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
                   value: 0.62,
-                  backgroundColor:
-                      context.colors.accent.withValues(alpha: 0.15),
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(context.colors.accent),
+                  backgroundColor: context.colors.accent.withValues(
+                    alpha: 0.15,
+                  ),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    context.colors.accent,
+                  ),
                   minHeight: 6,
                 ),
               ),
@@ -563,7 +571,9 @@ class _AccentColorPane extends ConsumerWidget {
                 alignment: Alignment.centerRight,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: context.colors.accent,
                     borderRadius: BorderRadius.circular(20),
@@ -571,9 +581,10 @@ class _AccentColorPane extends ConsumerWidget {
                   child: const Text(
                     'Save changes',
                     style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600),
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -625,11 +636,13 @@ class _AccentSwatch extends StatelessWidget {
                 color: color,
                 shape: BoxShape.circle,
                 boxShadow: selected
-                    ? [BoxShadow(
-                        color: color.withValues(alpha: 0.4),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      )]
+                    ? [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
                     : [],
               ),
               child: selected
@@ -677,8 +690,11 @@ class _FontSizePane extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Font Size',
-            'Adjust the text size across the whole app.'),
+        _sectionTitle(
+          context,
+          'Font Size',
+          'Adjust the text size across the whole app.',
+        ),
         const SizedBox(height: 28),
 
         // Preview box
@@ -692,9 +708,9 @@ class _FontSizePane extends ConsumerWidget {
           ),
           child: MediaQuery(
             // Override scaler inside preview so it mirrors the chosen size
-            data: MediaQuery.of(context).copyWith(
-              textScaler: TextScaler.linear(fontSize / 14.0),
-            ),
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(fontSize / 14.0)),
             child: Text(
               _previewText,
               style: TextStyle(
@@ -715,9 +731,8 @@ class _FontSizePane extends ConsumerWidget {
             for (var i = 0; i < _steps.length; i++)
               Expanded(
                 child: GestureDetector(
-                  onTap: () => ref
-                      .read(fontSizeProvider.notifier)
-                      .state = _steps[i].value,
+                  onTap: () => ref.read(fontSizeProvider.notifier).state =
+                      _steps[i].value,
                   child: Column(
                     children: [
                       Container(
@@ -805,8 +820,7 @@ class _DataControlPaneState extends ConsumerState<_DataControlPane> {
   @override
   void initState() {
     super.initState();
-    _memoryCtrl =
-        TextEditingController(text: ref.read(userMemoryProvider));
+    _memoryCtrl = TextEditingController(text: ref.read(userMemoryProvider));
   }
 
   @override
@@ -823,8 +837,11 @@ class _DataControlPaneState extends ConsumerState<_DataControlPane> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Data & Privacy',
-            'Manage your personal information and memory notes.'),
+        _sectionTitle(
+          context,
+          'Data & Privacy',
+          'Manage your personal information and memory notes.',
+        ),
         const SizedBox(height: 24),
 
         // Email row
@@ -852,13 +869,13 @@ class _DataControlPaneState extends ConsumerState<_DataControlPane> {
         TextField(
           controller: _memoryCtrl,
           maxLines: 5,
-          style: TextStyle(
-              color: context.colors.textPrimary, fontSize: 14),
+          style: TextStyle(color: context.colors.textPrimary, fontSize: 14),
           decoration: InputDecoration(
             hintText: 'optional',
             hintStyle: TextStyle(
-                color: context.colors.textMuted.withValues(alpha: 0.6),
-                fontStyle: FontStyle.italic),
+              color: context.colors.textMuted.withValues(alpha: 0.6),
+              fontStyle: FontStyle.italic,
+            ),
             filled: true,
             fillColor: context.colors.background,
             border: OutlineInputBorder(
@@ -871,12 +888,10 @@ class _DataControlPaneState extends ConsumerState<_DataControlPane> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide:
-                  BorderSide(color: context.colors.accent, width: 2),
+              borderSide: BorderSide(color: context.colors.accent, width: 2),
             ),
           ),
-          onChanged: (v) =>
-              ref.read(userMemoryProvider.notifier).state = v,
+          onChanged: (v) => ref.read(userMemoryProvider.notifier).state = v,
         ),
       ],
     );
@@ -894,25 +909,29 @@ class _UpgradePane extends ConsumerWidget {
     // ignore: prefer_const_declarations
     final bool isPro = const bool.fromEnvironment('LIFE_AGENT_PRO');
     final planLabel = isPro ? '✦  Pro' : 'Free Plan';
-    final planDescription =
-        isPro ? 'You\'re on the Pro plan.' : 'You\'re on the free plan.';
+    final planDescription = isPro
+        ? 'You\'re on the Pro plan.'
+        : 'You\'re on the free plan.';
     final badgeColor = isPro
         ? context.colors.accent.withValues(alpha: 0.15)
         : context.colors.border.withValues(alpha: 0.4);
-    final textColor =
-        isPro ? context.colors.accent : context.colors.textSecondary;
+    final textColor = isPro
+        ? context.colors.accent
+        : context.colors.textSecondary;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Upgrade',
-            'Unlock the full power of Life Agent.'),
+        _sectionTitle(
+          context,
+          'Upgrade',
+          'Unlock the full power of Life Agent.',
+        ),
         const SizedBox(height: 24),
 
         // Plan badge
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
           decoration: BoxDecoration(
             color: context.colors.background,
             borderRadius: BorderRadius.circular(14),
@@ -922,7 +941,9 @@ class _UpgradePane extends ConsumerWidget {
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
+                  horizontal: 12,
+                  vertical: 6,
+                ),
                 decoration: BoxDecoration(
                   color: badgeColor,
                   borderRadius: BorderRadius.circular(20),
@@ -965,9 +986,12 @@ class _UpgradePane extends ConsumerWidget {
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+                borderRadius: BorderRadius.circular(12),
+              ),
               textStyle: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -986,8 +1010,11 @@ class _LogoutPane extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(context, 'Logout',
-            'You will be signed out of your account on this device.'),
+        _sectionTitle(
+          context,
+          'Logout',
+          'You will be signed out of your account on this device.',
+        ),
         const SizedBox(height: 32),
         SizedBox(
           width: double.infinity,
@@ -995,6 +1022,8 @@ class _LogoutPane extends ConsumerWidget {
             onPressed: () {
               Navigator.of(context).pop();
               ref.read(authProvider.notifier).signOut();
+              // Navigate to today screen after sign-out
+              context.go('/today');
             },
             icon: const Icon(Icons.logout, size: 18),
             label: const Text('Sign out'),
@@ -1003,9 +1032,12 @@ class _LogoutPane extends ConsumerWidget {
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+                borderRadius: BorderRadius.circular(12),
+              ),
               textStyle: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1047,15 +1079,15 @@ Widget _infoRow(BuildContext context, String label, String value) {
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     decoration: BoxDecoration(
-      border:
-          Border(bottom: BorderSide(color: context.colors.border)),
+      border: Border(bottom: BorderSide(color: context.colors.border)),
     ),
     child: Row(
       children: [
         Expanded(
-          child: Text(label,
-              style: TextStyle(
-                  color: context.colors.textSecondary, fontSize: 14)),
+          child: Text(
+            label,
+            style: TextStyle(color: context.colors.textSecondary, fontSize: 14),
+          ),
         ),
         Flexible(
           child: Text(
