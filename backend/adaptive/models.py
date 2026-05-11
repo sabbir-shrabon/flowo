@@ -208,6 +208,7 @@ class TaskHistoryRow(BaseModel):
     id: UUID = Field(...)
     user_id: UUID
     task_id: UUID
+    task_index: int = 0  # 1-based position in the plan roadmap
     task_name: str  # snapshot at completion time
     milestone_id: UUID | None = None
     milestone_name: str | None = None  # snapshot at completion time

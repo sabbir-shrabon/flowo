@@ -393,13 +393,39 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Task name
-                Text(
-                  entry.taskName,
-                  style: TextStyle(
-                    color: context.colors.textPrimary,
-                    fontSize: 14,
-                  ),
+                // Task name with index
+                Row(
+                  children: [
+                    if (entry.taskIndex > 0)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 5,
+                          vertical: 1,
+                        ),
+                        margin: const EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          color: context.colors.accent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          '#${entry.taskIndex}',
+                          style: TextStyle(
+                            color: context.colors.accent,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    Expanded(
+                      child: Text(
+                        entry.taskName,
+                        style: TextStyle(
+                          color: context.colors.textPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
 
                 // Milestone name (if any)

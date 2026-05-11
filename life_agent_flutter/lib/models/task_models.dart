@@ -15,6 +15,7 @@ class TaskResponse {
   final int carryOverCount;
   final String? milestoneId;
   final int orderIndex;
+  final int taskIndex; // 1-based global position in plan roadmap
   final int? durationMinutes;
   final String createdAt;
   final String updatedAt;
@@ -37,6 +38,7 @@ class TaskResponse {
     required this.carryOverCount,
     this.milestoneId,
     required this.orderIndex,
+    this.taskIndex = 0,
     this.durationMinutes,
     required this.createdAt,
     required this.updatedAt,
@@ -67,6 +69,7 @@ class TaskResponse {
       carryOverCount: json['carry_over_count'] as int? ?? 0,
       milestoneId: json['milestone_id'] as String?,
       orderIndex: json['order_index'] as int? ?? 0,
+      taskIndex: json['task_index'] as int? ?? 0,
       durationMinutes: json['duration_minutes'] as int?,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
@@ -94,6 +97,7 @@ class TaskResponse {
       'carry_over_count': carryOverCount,
       'milestone_id': milestoneId,
       'order_index': orderIndex,
+      'task_index': taskIndex,
       'duration_minutes': durationMinutes,
       'created_at': createdAt,
       'updated_at': updatedAt,
@@ -118,10 +122,7 @@ class TaskUpdatePayload {
   });
 
   Map<String, dynamic> toJson() {
-    final map = <String, dynamic>{
-      'task_id': taskId,
-      'status': status.name,
-    };
+    final map = <String, dynamic>{'task_id': taskId, 'status': status.name};
     if (feedbackText != null) map['feedback_text'] = feedbackText;
     return map;
   }
@@ -147,11 +148,7 @@ class TaskDetailResource {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'type': type,
-      'title': title,
-      'description': description,
-    };
+    return {'type': type, 'title': title, 'description': description};
   }
 }
 
@@ -169,10 +166,7 @@ class TaskDetailHowToStep {
   }
 
   Map<String, dynamic> toJson() {
-    return {
-      'step': step,
-      'instruction': instruction,
-    };
+    return {'step': step, 'instruction': instruction};
   }
 }
 
@@ -207,7 +201,8 @@ class TaskDetailData {
           .toList(),
       todaysExample: (json['todays_example'] as String?) ?? '',
       expertTip: (json['expert_tip'] as String?) ?? '',
-      estimatedDifficulty: (json['estimated_difficulty'] as String?) ?? 'medium',
+      estimatedDifficulty:
+          (json['estimated_difficulty'] as String?) ?? 'medium',
     );
   }
 

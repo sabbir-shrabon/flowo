@@ -91,6 +91,7 @@ class TaskResponse(BaseModel):
     carry_over_count: int = 0
     milestone_id: UUID | None = None
     order_index: int = 0
+    task_index: int = 0  # 1-based global position in plan roadmap
     duration_minutes: int | None = None
     detail_json: dict | None = None
     rescheduled_from: date | None = None
@@ -420,6 +421,7 @@ class TaskHistoryResponse(BaseModel):
     id: UUID
     user_id: UUID
     task_id: UUID
+    task_index: int  # 1-based position in the plan roadmap
     task_name: str
     milestone_id: UUID | None = None
     milestone_name: str | None = None

@@ -4,6 +4,7 @@ class TaskHistoryResponse {
   final String id;
   final String userId;
   final String taskId;
+  final int taskIndex; // 1-based position in the plan roadmap
   final String taskName;
   final String? milestoneId;
   final String? milestoneName;
@@ -19,6 +20,7 @@ class TaskHistoryResponse {
     required this.id,
     required this.userId,
     required this.taskId,
+    required this.taskIndex,
     required this.taskName,
     this.milestoneId,
     this.milestoneName,
@@ -36,6 +38,7 @@ class TaskHistoryResponse {
       id: json['id'] as String,
       userId: json['user_id'] as String,
       taskId: json['task_id'] as String,
+      taskIndex: json['task_index'] as int? ?? 0,
       taskName: json['task_name'] as String,
       milestoneId: json['milestone_id'] as String?,
       milestoneName: json['milestone_name'] as String?,
@@ -54,6 +57,7 @@ class TaskHistoryResponse {
       'id': id,
       'user_id': userId,
       'task_id': taskId,
+      'task_index': taskIndex,
       'task_name': taskName,
       'milestone_id': milestoneId,
       'milestone_name': milestoneName,

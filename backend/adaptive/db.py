@@ -373,6 +373,21 @@ class AdaptiveStore:
             return None
         return res[1][0]
 
+    def clear_daily_task_batch(self, user_id: UUID, on_date: date) -> bool:
+        """Delete the locked daily batch for a user/date."""
+        try:
+            res = (
+                self.client.table("daily_task_batches")
+                .delete()
+                .eq("user_id", str(user_id))
+                .eq("date", on_date.isoformat())
+                .execute()
+            )
+            return True
+        except Exception as exc:
+            logger.warning("daily_task_batches delete failed: %s", exc)
+            return False
+
     def increment_carry_over(self, task_id: UUID) -> TaskRow | None:
         """Increment carry_over_count using a single PATCH with raw SQL expression via PostgREST."""
         # PostgREST doesn't support atomic increment directly,
@@ -530,6 +545,19 @@ class AdaptiveStore:
         total = len(rows)
         remaining = sum(1 for r in rows if r.get("status") not in ("done", "skipped"))
         return total, remaining
+
+    def get_tasks_for_plan(self, plan_id: UUID) -> list[TaskRow]:
+        """Get all tasks for a plan, sorted by order_index."""
+        res = (
+            self.client.table("tasks")
+            .select()
+            .eq("plan_id", str(plan_id))
+            .order("order_index")
+            .execute()
+        )
+        if not res or not res[1]:
+            return []
+        return [self._map_task(row) for row in res[1]]
 
     def count_tasks_batch(self, plan_ids: list[UUID]) -> dict[str, tuple[int, int]]:
         """Return {plan_id_str: (total_tasks, remaining_tasks)} for multiple plans."""
@@ -1120,6 +1148,7 @@ class AdaptiveStore:
         self,
         user_id: UUID,
         task_id: UUID,
+        task_index: int,
         task_name: str,
         plan_id: UUID,
         plan_name: str,
@@ -1136,6 +1165,7 @@ class AdaptiveStore:
         data = {
             "user_id": str(user_id),
             "task_id": str(task_id),
+            "task_index": task_index,
             "task_name": task_name,
             "plan_id": str(plan_id),
             "plan_name": plan_name,
@@ -1207,6 +1237,7 @@ class AdaptiveStore:
             id=self._safe_uuid(row.get("id")),
             user_id=self._safe_uuid(row.get("user_id")),
             task_id=self._safe_uuid(row.get("task_id")),
+            task_index=row.get("task_index") or 0,
             task_name=row.get("task_name") or "",
             milestone_id=self._safe_uuid(row.get("milestone_id")) if row.get("milestone_id") else None,
             milestone_name=row.get("milestone_name"),

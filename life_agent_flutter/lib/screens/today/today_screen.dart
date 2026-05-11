@@ -1797,7 +1797,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
 
 // ── Task Group Widget ─────────────────────────────────────────────────────────
 
-class _PlanTaskGroup extends StatelessWidget {
+class _PlanTaskGroup extends StatefulWidget {
   final String planTitle;
   final Map<String, MilestoneSummary> milestonesMetadata;
   final List<TaskResponse> tasks;
@@ -1819,9 +1819,16 @@ class _PlanTaskGroup extends StatelessWidget {
   });
 
   @override
+  State<_PlanTaskGroup> createState() => _PlanTaskGroupState();
+}
+
+class _PlanTaskGroupState extends State<_PlanTaskGroup> {
+  bool _isExpanded = true;
+
+  @override
   Widget build(BuildContext context) {
     final tasksByMilestone = <String, List<TaskResponse>>{};
-    for (final task in tasks) {
+    for (final task in widget.tasks) {
       final key = task.milestoneId ?? '';
       tasksByMilestone.putIfAbsent(key, () => []).add(task);
     }
@@ -1829,73 +1836,115 @@ class _PlanTaskGroup extends StatelessWidget {
     final sortedMilestoneIds = tasksByMilestone.keys.toList();
     sortedMilestoneIds.sort((a, b) {
       final orderA =
-          milestonesMetadata[a]?.orderIndex ?? (a.isEmpty ? 1 << 30 : 1 << 29);
+          widget.milestonesMetadata[a]?.orderIndex ??
+          (a.isEmpty ? 1 << 30 : 1 << 29);
       final orderB =
-          milestonesMetadata[b]?.orderIndex ?? (b.isEmpty ? 1 << 30 : 1 << 29);
+          widget.milestonesMetadata[b]?.orderIndex ??
+          (b.isEmpty ? 1 << 30 : 1 << 29);
       if (orderA != orderB) return orderA.compareTo(orderB);
-      final titleA = milestonesMetadata[a]?.title ?? '';
-      final titleB = milestonesMetadata[b]?.title ?? '';
+      final titleA = widget.milestonesMetadata[a]?.title ?? '';
+      final titleB = widget.milestonesMetadata[b]?.title ?? '';
       return titleA.compareTo(titleB);
     });
+
+    final completedCount = widget.tasks
+        .where((t) => t.status == TaskStatus.done)
+        .length;
+    final activeCount = widget.tasks.length - completedCount;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Plan name as muted label
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 16, 0, 8),
-          child: Text(
-            planTitle,
-            style: TextStyle(
-              color: context.colors.textMuted,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
+        // Plan name header with dropdown toggle
+        InkWell(
+          onTap: () => setState(() => _isExpanded = !_isExpanded),
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
+            child: Row(
+              children: [
+                Icon(
+                  _isExpanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 20,
+                  color: context.colors.textMuted,
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    widget.planTitle,
+                    style: TextStyle(
+                      color: context.colors.textPrimary,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ),
+                // Task count badge
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: context.colors.elevated,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '$activeCount active${completedCount > 0 ? ' · $completedCount done' : ''}',
+                    style: TextStyle(
+                      color: context.colors.textMuted,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
 
-        // Task list grouped by milestone metadata from the daily schedule.
-        ...sortedMilestoneIds.expand((milestoneId) {
-          final milestone = milestonesMetadata[milestoneId];
-          final milestoneTasks = tasksByMilestone[milestoneId]!
-            ..sort((a, b) {
-              final bySchedule = (orderByTaskId[a.id] ?? 1 << 30).compareTo(
-                orderByTaskId[b.id] ?? 1 << 30,
-              );
-              if (bySchedule != 0) return bySchedule;
-              return a.orderIndex.compareTo(b.orderIndex);
-            });
+        // Task list (collapsible)
+        if (_isExpanded)
+          ...sortedMilestoneIds.expand((milestoneId) {
+            final milestone = widget.milestonesMetadata[milestoneId];
+            final milestoneTasks = tasksByMilestone[milestoneId]!
+              ..sort((a, b) {
+                final bySchedule = (widget.orderByTaskId[a.id] ?? 1 << 30)
+                    .compareTo(widget.orderByTaskId[b.id] ?? 1 << 30);
+                if (bySchedule != 0) return bySchedule;
+                return a.orderIndex.compareTo(b.orderIndex);
+              });
 
-          return [
-            if (milestone != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 2, 0, 4),
-                child: Text(
-                  milestone.title,
-                  style: TextStyle(
-                    color: context.colors.textSecondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+            return [
+              if (milestone != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 0, 4),
+                  child: Text(
+                    milestone.title,
+                    style: TextStyle(
+                      color: context.colors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
+              ...milestoneTasks.map(
+                (task) => _TaskRow(
+                  task: task,
+                  isActing: widget.actingTaskId == task.id,
+                  onCheck: () {
+                    if (task.status == TaskStatus.done) {
+                      widget.onUncheck(task.id);
+                    } else {
+                      widget.onCheckDone(task.id);
+                    }
+                  },
+                  onTap: () => widget.onTaskTap(task),
+                ),
               ),
-            ...milestoneTasks.map(
-              (task) => _TaskRow(
-                task: task,
-                isActing: actingTaskId == task.id,
-                onCheck: () {
-                  if (task.status == TaskStatus.done) {
-                    onUncheck(task.id);
-                  } else {
-                    onCheckDone(task.id);
-                  }
-                },
-                onTap: () => onTaskTap(task),
-              ),
-            ),
-          ];
-        }),
+            ];
+          }),
       ],
     );
   }
@@ -1936,6 +1985,21 @@ class _TaskRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
         child: Row(
           children: [
+            // Task index number
+            if (task.taskIndex > 0)
+              SizedBox(
+                width: 28,
+                child: Text(
+                  '#${task.taskIndex}',
+                  style: TextStyle(
+                    color: isDone
+                        ? context.colors.textMuted
+                        : context.colors.textSecondary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
             // Checkbox
             SizedBox(
               width: 40,

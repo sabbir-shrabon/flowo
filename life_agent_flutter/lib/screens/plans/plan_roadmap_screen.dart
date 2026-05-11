@@ -1164,17 +1164,36 @@ class _RoadmapMilestoneNodeState extends State<_RoadmapMilestoneNode>
                           ),
                         ),
                       ],
-                      ...ms.tasks.asMap().entries.map((e) {
-                        final task = e.value;
+                      ...ms.tasks.map((task) {
                         final isDone = task.status == TaskStatus.done;
                         final isSkipped = task.status == TaskStatus.skipped;
                         final isActing = widget.actingTaskId == task.id;
+                        // Use task.taskIndex from backend (1-based global position in plan)
+                        final displayIndex = task.taskIndex > 0
+                            ? task.taskIndex
+                            : 0;
 
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 6),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              // Task index number (from backend)
+                              if (displayIndex > 0)
+                                SizedBox(
+                                  width: 24,
+                                  child: Text(
+                                    '#$displayIndex',
+                                    style: TextStyle(
+                                      color: isDone || isSkipped
+                                          ? context.colors.textMuted
+                                          : _color,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              const SizedBox(width: 4),
                               // Checkbox
                               SizedBox(
                                 width: 22,

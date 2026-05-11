@@ -9,12 +9,15 @@ Core concepts:
 
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta, timezone
 from math import ceil
 from uuid import UUID
 
 from backend.adaptive.db import adaptive_store
 from backend.adaptive.models import PlanPriority, PlanRow, PlanStatus, TaskRow, TaskStatus
+
+logger = logging.getLogger(__name__)
 
 
 _PRIORITY_ORDER = {
@@ -91,13 +94,25 @@ def _current_working_day(plan: PlanRow, on_date: date) -> int:
 
 
 def _remaining_working_days(plan: PlanRow, on_date: date) -> int:
-    """Count working days from on_date/start through the inclusive deadline."""
+    """Count working days from on_date/start through the inclusive deadline.
+    
+    For plans without explicit duration/end_date, returns a generous default
+    to ensure tasks can be scheduled.
+    """
     working_days = _get_working_days(plan)
     start = _plan_start_date(plan)
-    deadline = _plan_deadline(plan)
-
-    if on_date > deadline:
-        return 0
+    
+    # Check if plan has explicit end configuration
+    prefs = plan.schedule_prefs or {}
+    has_explicit_end = prefs.get("end_date") is not None or plan.duration_days is not None
+    
+    if has_explicit_end:
+        deadline = _plan_deadline(plan)
+        if on_date > deadline:
+            return 0
+    else:
+        # No explicit end - use a generous default (90 days from now)
+        deadline = on_date + timedelta(days=90)
 
     count = 0
     current = max(on_date, start)
@@ -152,16 +167,19 @@ class SchedulerService:
         plans_working_day: dict[str, int] = {}
 
         for plan in active_plans:
-            if not (plan.schedule_prefs or {}).get("working_days"):
-                continue
-
+            # Get working days (fallback to Mon-Fri if not configured)
             working_days = _get_working_days(plan)
             working_day_num = _current_working_day(plan, on_date)
             plans_working_day[str(plan.id)] = working_day_num
+            
+            logger.debug(f"Scheduler: plan={plan.id}, working_day_num={working_day_num}, working_days={working_days}, today_weekday={on_date.weekday()}")
+            
             if working_day_num <= 0:
+                logger.debug(f"Scheduler: skipping plan {plan.id} - working_day_num <= 0")
                 continue
 
             ordered_tasks = self._ordered_tasks_for_plan(user_id, plan)
+            logger.debug(f"Scheduler: plan={plan.id}, ordered_tasks={len(ordered_tasks)}")
             if not ordered_tasks:
                 continue
 
@@ -169,6 +187,7 @@ class SchedulerService:
                 t for t in ordered_tasks
                 if t.status in (TaskStatus.pending, TaskStatus.partial)
             ]
+            logger.debug(f"Scheduler: plan={plan.id}, remaining_undone={len(remaining_undone)}")
             if not remaining_undone:
                 tasks_per_day = 0
             else:
@@ -177,6 +196,7 @@ class SchedulerService:
                 largest_plan_slice = max(largest_plan_slice, tasks_per_day)
 
             is_working_today = on_date.weekday() in working_days
+            logger.debug(f"Scheduler: plan={plan.id}, is_working_today={is_working_today}, tasks_per_day={tasks_per_day}")
             rollover: list[TaskRow] = []
             fresh: list[TaskRow] = []
             for task in ordered_tasks:
@@ -185,6 +205,10 @@ class SchedulerService:
                 if task.due_date is not None and task.due_date < on_date:
                     rollover.append(task)
                 elif is_working_today and (task.due_date is None or task.due_date == on_date):
+                    fresh.append(task)
+                elif is_working_today and working_day_num == 1:
+                    # On the first working day of a new plan, include tasks scheduled
+                    # for future dates since they belong to this working day
                     fresh.append(task)
 
             plan_selection: list[TaskRow] = []
@@ -197,6 +221,8 @@ class SchedulerService:
                 remaining_slots = tasks_per_day - len(rollover_capped)
                 fresh_capped = fresh[:max(0, remaining_slots)]
                 
+                logger.debug(f"Scheduler: plan={plan.id}, rollover={len(rollover)}, fresh={len(fresh)}, selection={len(rollover_capped + fresh_capped)}")
+                
                 for task in rollover_capped + fresh_capped:
                     plan_selection.append(task)
                     total_available += 1
@@ -207,6 +233,8 @@ class SchedulerService:
         selected: list[TaskRow] = []
         for _plan, plan_tasks, _tasks_per_day, _wd in selected_by_plan:
             selected.extend(plan_tasks)
+        
+        logger.debug(f"Scheduler: total selected={len(selected)} tasks from {len(selected_by_plan)} plans")
 
         return {
             "date": on_date,

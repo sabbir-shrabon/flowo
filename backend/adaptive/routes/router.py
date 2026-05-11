@@ -177,6 +177,15 @@ async def pull_extra_daily_tasks(
     return _daily_schedule_response(result)
 
 
+@router.delete("/scheduler/daily/batch")
+async def clear_daily_batch(
+    user_id: UUID = Depends(get_current_user),
+):
+    """Clear the locked daily batch cache to force recalculation."""
+    adaptive_store.clear_daily_task_batch(user_id, date.today())
+    return {"status": "cleared"}
+
+
 # ── Events ─────────────────────────────────────────────────────────────────────
 
 @router.post("/events", response_model=EventResponse)
@@ -237,7 +246,7 @@ async def get_tasks_today(
 ):
     try:
         tasks = adaptive_store.get_tasks_for_date(user_id, date.today())
-        return [_task_to_response(t) for t in tasks]
+        return _tasks_with_indices(tasks)
     except HTTPException:
         raise
     except Exception as e:
@@ -257,7 +266,7 @@ async def get_tasks_today_v2(
     try:
         today = date.today()
         result = scheduler_service.get_daily_tasks(user_id, today)
-        return [_task_to_response(t) for t in result["tasks"]]
+        return _tasks_with_indices(result["tasks"])
     except HTTPException:
         raise
     except Exception as e:
@@ -307,12 +316,30 @@ async def update_task_status(
         if payload.status == TaskStatus.done:
             plan = adaptive_store.get_plan(task.plan_id)
             milestone_name = None
+            task_index = 0  # 1-based position in plan roadmap
             if task.milestone_id:
                 milestones = adaptive_store.get_milestones_for_plan(user_id, task.plan_id)
+                # Calculate task_index: position across all milestones
+                all_task_ids = []
+                for ms in sorted(milestones, key=lambda m: m.order_index):
+                    ms_tasks = adaptive_store.get_tasks_for_milestone(user_id, ms.id)
+                    all_task_ids.extend([t.id for t in sorted(ms_tasks, key=lambda t: t.order_index)])
+                try:
+                    task_index = all_task_ids.index(task.id) + 1  # 1-based
+                except ValueError:
+                    task_index = len(all_task_ids) + 1  # fallback
                 for ms in milestones:
                     if ms.id == task.milestone_id:
                         milestone_name = ms.title
                         break
+            else:
+                # No milestone - calculate from all plan tasks
+                plan_tasks = adaptive_store.get_tasks_for_plan(task.plan_id)
+                all_task_ids = [t.id for t in sorted(plan_tasks, key=lambda t: t.order_index)]
+                try:
+                    task_index = all_task_ids.index(task.id) + 1
+                except ValueError:
+                    task_index = len(all_task_ids) + 1
             # Get working_day_index from daily batch metadata if available
             working_day_index = None
             batch = adaptive_store.get_daily_task_batch(user_id, task.due_date or date.today())
@@ -325,6 +352,7 @@ async def update_task_status(
                 adaptive_store.create_task_history(
                     user_id=user_id,
                     task_id=task.id,
+                    task_index=task_index,
                     task_name=task.title,
                     plan_id=task.plan_id,
                     plan_name=plan.title if plan else "Untitled Plan",
@@ -466,7 +494,7 @@ async def mark_busy(
     user_id: UUID = Depends(get_current_user),
 ):
     rescheduled = adjuster_service.handle_busy(user_id)
-    return [_task_to_response(t) for t in rescheduled]
+    return _tasks_with_indices(rescheduled)
 
 
 @router.post("/tasks/overflow", response_model=list[TaskResponse])
@@ -474,7 +502,7 @@ async def reschedule_overflow(
     user_id: UUID = Depends(get_current_user),
 ):
     rescheduled = adjuster_service.reschedule_overflow(user_id)
-    return [_task_to_response(t) for t in rescheduled]
+    return _tasks_with_indices(rescheduled)
 
 
 @router.post("/tasks/pull-next", response_model=TaskResponse)
@@ -739,6 +767,9 @@ async def generate_plan(
         tasks = ms_data["tasks"]
         milestone_responses.append(_milestone_to_response(ms, tasks))
 
+    # Clear today's batch so scheduler includes new plan's tasks
+    adaptive_store.clear_daily_task_batch(user_id, date.today())
+
     return CreatePlanResponse(
         plan=PlanResponse(
             id=plan.id,
@@ -886,6 +917,9 @@ async def generate_plan_from_answers(
         _milestone_to_response(ms_data["milestone"], ms_data["tasks"])
         for ms_data in result_milestones
     ]
+
+    # Clear today's batch so scheduler includes new plan's tasks
+    adaptive_store.clear_daily_task_batch(user_id, date.today())
 
     return CreatePlanResponse(
         plan=PlanResponse(
@@ -1260,6 +1294,9 @@ async def adapt_plan(
     # If plan was in 'setup' status, move it to 'active'
     if plan.status == PlanStatus.setup:
         updated = adaptive_store.update_plan(plan_id, status=PlanStatus.active)
+
+    # Clear today's batch so scheduler recalculates with new task dates
+    adaptive_store.clear_daily_task_batch(user_id, date.today())
 
     total_t, remaining_t = adaptive_store.count_tasks_for_plan(plan_id)
     return _plan_to_response(updated or plan, total_tasks=total_t, remaining_tasks=remaining_t)
@@ -2206,7 +2243,7 @@ def _daily_schedule_response(result: dict, adapt_result: dict | None = None) -> 
 
     return DailyTasksResponse(
         date=result["date"],
-        tasks=[_task_to_response(t) for t in tasks],
+        tasks=_tasks_with_indices(tasks),
         total_available=result["total_available"],
         selected_count=result["selected_count"],
         max_tasks_per_day=result["max_tasks_per_day"],
@@ -2245,7 +2282,7 @@ def _plan_to_response(p, progress_pct: float = 0.0, total_tasks: int = 0, remain
     )
 
 
-def _task_to_response(t) -> TaskResponse:
+def _task_to_response(t, task_index: int = 0) -> TaskResponse:
     return TaskResponse(
         id=t.id,
         plan_id=t.plan_id,
@@ -2259,6 +2296,7 @@ def _task_to_response(t) -> TaskResponse:
         carry_over_count=t.carry_over_count,
         milestone_id=t.milestone_id,
         order_index=t.order_index,
+        task_index=task_index,
         duration_minutes=t.duration_minutes,
         detail_json=t.detail_json,
         rescheduled_from=getattr(t, 'rescheduled_from', None),
@@ -2268,6 +2306,71 @@ def _task_to_response(t) -> TaskResponse:
         created_at=t.created_at,
         updated_at=t.updated_at,
     )
+
+
+def _tasks_with_indices(tasks: list) -> list[TaskResponse]:
+    """Calculate task_index for each task based on its position in the plan roadmap."""
+    if not tasks:
+        return []
+    
+    # Group tasks by plan
+    by_plan: dict[UUID, list] = {}
+    for t in tasks:
+        by_plan.setdefault(t.plan_id, []).append(t)
+
+    # For each plan, get all milestones and that plan, then calculate indices
+    plan_task_indices: dict[UUID, dict[UUID, int]] = {}  # plan_id -> {task_id -> index}
+    for plan_id, plan_tasks in by_plan.items():
+        if not plan_tasks:
+            continue
+        # Get the plan to access user_id
+        plan = adaptive_store.get_plan(plan_id)
+        # Get all tasks for this plan to calculate proper indices
+        all_plan_tasks = adaptive_store.get_tasks_for_plan(plan_id)
+        
+        logger.info(f"_tasks_with_indices: plan_id={plan_id}, all_tasks={len(all_plan_tasks)}, input_tasks={len(plan_tasks)}")
+        
+        if not all_plan_tasks:
+            # Fallback: use input tasks directly with simple ordering
+            logger.warning(f"_tasks_with_indices: no tasks found for plan {plan_id}, using input tasks")
+            all_plan_tasks = plan_tasks
+        
+        # Group by milestone
+        by_milestone: dict[UUID | None, list] = {}
+        for pt in all_plan_tasks:
+            by_milestone.setdefault(pt.milestone_id, []).append(pt)
+
+        # Get milestone order
+        milestone_order: dict[UUID | None, int] = {}
+        if plan and plan.user_id:
+            milestones = adaptive_store.get_milestones_for_plan(plan.user_id, plan_id)
+            for i, ms in enumerate(sorted(milestones, key=lambda m: m.order_index)):
+                milestone_order[ms.id] = i
+        
+        logger.info(f"_tasks_with_indices: milestones={len(milestone_order)}, by_milestone_groups={len(by_milestone)}")
+
+        # Calculate global task index
+        task_index_map = {}
+        global_idx = 1
+        # Sort milestones by order (tasks without milestone go first with order -1)
+        sorted_milestone_ids = sorted(by_milestone.keys(), key=lambda mid: milestone_order.get(mid, 999) if mid else -1)
+        for mid in sorted_milestone_ids:
+            ms_tasks = sorted(by_milestone[mid], key=lambda t: t.order_index)
+            for pt in ms_tasks:
+                task_index_map[pt.id] = global_idx
+                global_idx += 1
+        plan_task_indices[plan_id] = task_index_map
+        
+        logger.info(f"_tasks_with_indices: calculated {len(task_index_map)} indices for plan {plan_id}")
+
+    # Build responses with calculated indices
+    result = []
+    for t in tasks:
+        idx = plan_task_indices.get(t.plan_id, {}).get(t.id, 0)
+        if idx == 0:
+            logger.warning(f"_tasks_with_indices: task {t.id} has no index in plan {t.plan_id}")
+        result.append(_task_to_response(t, idx))
+    return result
 
 
 def _milestone_to_response(ms, tasks=None) -> MilestoneResponse:
@@ -2281,7 +2384,7 @@ def _milestone_to_response(ms, tasks=None) -> MilestoneResponse:
         status=ms.status,
         suggested_days=getattr(ms, 'suggested_days', None),
         outcome=getattr(ms, 'outcome', None),
-        tasks=[_task_to_response(t) for t in (tasks or [])],
+        tasks=_tasks_with_indices(tasks or []),
         created_at=ms.created_at,
         updated_at=ms.updated_at,
     )
@@ -2346,6 +2449,7 @@ def _history_to_response(h) -> TaskHistoryResponse:
         id=h.id,
         user_id=h.user_id,
         task_id=h.task_id,
+        task_index=h.task_index,
         task_name=h.task_name,
         milestone_id=h.milestone_id,
         milestone_name=h.milestone_name,
