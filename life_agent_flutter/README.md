@@ -24,12 +24,33 @@ flutter run ^
   --dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID
 ```
 
+Production web build example:
+
+```bash
+flutter build web --release ^
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co ^
+  --dart-define=SUPABASE_ANON_KEY=YOUR_ANON_KEY ^
+  --dart-define=API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com ^
+  --dart-define=GOOGLE_WEB_CLIENT_ID=YOUR_WEB_CLIENT_ID
+```
+
+Or use the helper script from `life_agent_flutter/` after updating `.env`:
+
+```powershell
+.\build_web.ps1 -ApiBaseUrl https://YOUR-RENDER-SERVICE.onrender.com
+```
+
 If you prefer, copy `.env.example` as a reference for the keys you need (the app does not read `.env` automatically).
 
 For Flutter web Google sign-in, also configure these outside the repo:
 
 - Google Cloud OAuth authorized JavaScript origin: `http://localhost:5000`
 - Supabase Auth site URL or additional redirect URL: `http://localhost:5000`
+
+For production web deployment, also add:
+
+- Your Vercel site URL as a Google Cloud OAuth authorized JavaScript origin, for example `https://yourappname.vercel.app`
+- Your Vercel site URL in Supabase Auth -> URL Configuration -> Site URL or Additional Redirect URLs
 
 For Flutter mobile Google sign-in, the app now uses Supabase OAuth with a deep link callback:
 

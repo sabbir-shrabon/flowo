@@ -45,5 +45,4 @@ Flutter run key commands.
 how to push changes to GitHub:
     git add .
     git commit -m "your commit message"
-    git push
-
+    git push origin main

@@ -21,6 +21,11 @@ env/
 # Build
 dist/
 build/
+!life_agent_flutter/build
+!life_agent_flutter/build/
+!life_agent_flutter/build/web
+!life_agent_flutter/build/web/
+!life_agent_flutter/build/web/**
 
 # Misc
 .next/
