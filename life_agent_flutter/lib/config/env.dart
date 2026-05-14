@@ -4,12 +4,20 @@
 /// - `SUPABASE_URL`
 /// - `SUPABASE_ANON_KEY`
 /// - `API_BASE_URL`
+/// - `GOOGLE_WEB_CLIENT_ID`
+/// - `GOOGLE_IOS_CLIENT_ID` (optional)
 ///
 /// Example:
 /// `flutter run --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=... --dart-define=API_BASE_URL=http://10.0.2.2:8000`
 class Env {
   static const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
   static const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  static const googleWebClientId = String.fromEnvironment(
+    'GOOGLE_WEB_CLIENT_ID',
+  );
+  static const googleIosClientId = String.fromEnvironment(
+    'GOOGLE_IOS_CLIENT_ID',
+  );
 
   /// Optional override; if not provided we fall back to platform defaults
   /// in `ApiConfig`.
@@ -31,6 +39,15 @@ class Env {
       );
     }
     return supabaseAnonKey;
+  }
+
+  static String requireGoogleWebClientId() {
+    if (googleWebClientId.trim().isEmpty) {
+      throw StateError(
+        'Missing GOOGLE_WEB_CLIENT_ID. Run with --dart-define=GOOGLE_WEB_CLIENT_ID=...',
+      );
+    }
+    return googleWebClientId;
   }
 }
 

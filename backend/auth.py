@@ -10,6 +10,7 @@ Usage in any router:
 from __future__ import annotations
 
 from uuid import UUID
+import time
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -19,13 +20,26 @@ from backend.config import settings
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
+# Token blacklist for revoked sessions (in-memory, use Redis in production)
+_revoked_tokens: set[str] = set()
+
+
+def revoke_token(token: str) -> None:
+    """Add a token to the revocation blacklist."""
+    _revoked_tokens.add(token)
+
+
+def is_token_revoked(token: str) -> bool:
+    """Check if a token has been revoked."""
+    return token in _revoked_tokens
+
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> UUID:
     """
     Verify the Supabase JWT Bearer token and return the authenticated user's UUID.
-    Raises 401 if missing, expired, or invalid.
+    Raises 401 if missing, expired, invalid, or revoked.
     """
     if credentials is None:
         raise HTTPException(
@@ -35,6 +49,14 @@ def get_current_user(
         )
 
     token = credentials.credentials
+
+    # Check if token is revoked
+    if is_token_revoked(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been revoked. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         header = jwt.get_unverified_header(token)
@@ -47,6 +69,8 @@ def get_current_user(
     if not settings.supabase_jwt_secret or settings.supabase_jwt_secret == "YOUR_JWT_SECRET_HERE" or alg != "HS256":
         try:
             payload = jwt.decode(token, options={"verify_signature": False}, algorithms=[alg])
+            # Validate token hasn't expired even without signature verification
+            _validate_token_expiry(payload)
             return UUID(payload["sub"])
         except Exception as exc:
             raise HTTPException(
@@ -61,6 +85,8 @@ def get_current_user(
             algorithms=["HS256"],
             audience="authenticated",
         )
+        # Additional validation: check token hasn't expired
+        _validate_token_expiry(payload)
         return UUID(payload["sub"])
     except jwt.ExpiredSignatureError:
         raise HTTPException(
@@ -84,4 +110,19 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token payload (missing or invalid 'sub'): {exc}",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _validate_token_expiry(payload: dict) -> None:
+    """Validate that the token hasn't expired."""
+    exp = payload.get("exp")
+    if exp is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing expiration claim.",
+        )
+    if time.time() > exp:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired. Please log in again.",
         )

@@ -8,9 +8,25 @@ import logging
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+except ImportError:
+    Limiter = None
+    get_remote_address = None
 
 logger = logging.getLogger(__name__)
+
+# Rate limiter for expensive operations
+if Limiter and get_remote_address:
+    limiter = Limiter(key_func=get_remote_address)
+    limit_10_per_minute = limiter.limit("10/minute")
+else:
+    limiter = None
+
+    def limit_10_per_minute(func):
+        return func
 
 from backend.auth import get_current_user
 from backend.adaptive.db import adaptive_store
@@ -748,7 +764,9 @@ async def delete_plan(
 
 
 @router.post("/plans/generate", response_model=CreatePlanResponse)
+@limit_10_per_minute  # Plan generation is expensive when slowapi is available
 async def generate_plan(
+    request: Request,  # Required by slowapi
     payload: CreatePlanRequest,
     user_id: UUID = Depends(get_current_user),
 ):
@@ -817,7 +835,9 @@ Today's date: {today}"""
 
 
 @router.post("/plans/generate-from-answers", response_model=CreatePlanResponse)
+@limit_10_per_minute  # Plan generation is expensive when slowapi is available
 async def generate_plan_from_answers(
+    request: Request,  # Required by slowapi
     payload: GenerateFromAnswersRequest,
     user_id: UUID = Depends(get_current_user),
 ):
@@ -1724,7 +1744,9 @@ async def today_chat(
 # ── Create Plan from Memory ───────────────────────────────────────────────────
 
 @router.post("/create-plan", response_model=CreatePlanResponse)
+@limit_10_per_minute  # Plan generation is expensive when slowapi is available
 async def create_plan_from_memory(
+    request: Request,  # Required by slowapi
     payload: CreatePlanRequest,
     user_id: UUID = Depends(get_current_user),
 ):

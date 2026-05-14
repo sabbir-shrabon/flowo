@@ -1,4 +1,7 @@
-# Reads .env and runs flutter run -d chrome with --dart-define flags
+# Reads .env and runs Flutter web in Chrome at http://localhost:5000.
+# For Google OAuth on web, `http://localhost:5000` must also be added to:
+# 1. Google Cloud OAuth authorized JavaScript origins
+# 2. Supabase Auth URL configuration (site URL / additional redirect URLs)
 $envFile = Join-Path $PSScriptRoot '.env'
 if (-not (Test-Path $envFile)) {
     Write-Error "Missing .env file. Copy .env.example to .env and fill in your values."
@@ -22,8 +25,8 @@ Get-Content $envFile | ForEach-Object {
     }
 }
 
-Write-Host "Running flutter run -d chrome with defines:" -ForegroundColor Cyan
+Write-Host "Running Flutter web in Chrome at http://localhost:5000 with defines:" -ForegroundColor Cyan
 $defines | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
 
 Set-Location $PSScriptRoot
-flutter run -d chrome @defines
+flutter run -d chrome --web-hostname=localhost --web-port=5000 @defines

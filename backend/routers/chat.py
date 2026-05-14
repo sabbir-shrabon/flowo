@@ -3,10 +3,16 @@ import json
 import logging
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Any
 from uuid import UUID
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+except ImportError:
+    Limiter = None
+    get_remote_address = None
 
 from backend.auth import get_current_user
 from backend.lib.mistral_provider import asendChat, asendChatGuided, MistralProviderError
@@ -14,6 +20,16 @@ from backend.adaptive.db import adaptive_store
 from backend.adaptive.models import PlanStatus, TaskStatus
 from backend.adaptive.schemas import PlanChatAction
 from backend.adaptive.services.adjuster import adjuster_service
+
+# Rate limiter for chat endpoints (expensive LLM calls)
+if Limiter and get_remote_address:
+    limiter = Limiter(key_func=get_remote_address)
+    limit_30_per_minute = limiter.limit("30/minute")
+else:
+    limiter = None
+
+    def limit_30_per_minute(func):
+        return func
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +280,9 @@ def _parse_plan_actions(content: str) -> tuple[list[PlanChatAction], str]:
 
 @router.post("")
 @router.post("/")
+@limit_30_per_minute  # 30 chat messages per minute per IP when slowapi is available
 async def chat_endpoint(
+    request: Request,  # Required by slowapi
     data: ChatRequest,
     user_id: UUID = Depends(get_current_user),
 ) -> dict[str, Any]:
