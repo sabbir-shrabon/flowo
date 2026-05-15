@@ -59,7 +59,7 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://flowo-pi.vercel.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
