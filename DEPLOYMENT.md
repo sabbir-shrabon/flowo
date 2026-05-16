@@ -3,7 +3,7 @@
 This repo is set up for:
 
 - FastAPI backend on Render
-- Flutter web frontend on Vercel
+- Flutter web frontend on Vercel or Netlify
 
 ## 1. Backend on Render
 
@@ -24,8 +24,15 @@ Environment variables you will need to add in Render:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `SUPABASE_ANON_KEY`
+- `CORS_ORIGINS`
 - `LLM_PROVIDER`
 - Provider-specific keys you actually use, such as `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, or `GROQ_API_KEY`
+
+Recommended `CORS_ORIGINS` value:
+
+```text
+http://localhost:3000,http://localhost:5000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5000,http://127.0.0.1:8000,https://YOUR_SITE.netlify.app,https://YOUR_SITE.vercel.app
+```
 
 Notes:
 
@@ -58,9 +65,15 @@ The output is:
 
 This path is now allowed through `.gitignore` so you can commit it if you want Vercel to deploy the prebuilt output directly.
 
-## 3. Frontend on Vercel
+## 3. Frontend on Vercel or Netlify
 
 Recommended settings for the prebuilt-output workflow:
+
+- Build the Flutter app locally first with the required `--dart-define` values
+- Deploy the generated `life_agent_flutter/build/web` folder as static hosting output
+- SPA fallback is already included via `life_agent_flutter/web/_redirects` and root `netlify.toml`
+
+For Vercel:
 
 - Import the same GitHub repository into Vercel
 - Framework preset: `Other`
@@ -68,18 +81,24 @@ Recommended settings for the prebuilt-output workflow:
 - Build command: leave blank
 - Output directory: `.`
 
+For Netlify:
+
+- Publish directory: `life_agent_flutter/build/web`
+- If you connect the whole repo, use the included [netlify.toml](/d:/my%20projects/my%20research/life%20agent/netlify.toml)
+- If you drag-and-drop deploy manually, upload the contents of `life_agent_flutter/build/web`
+
 Each frontend update flow:
 
 1. Rebuild Flutter web locally with the correct `--dart-define` values
 2. Commit the updated `life_agent_flutter/build/web` files
 3. Push to GitHub
-4. Vercel redeploys automatically
+4. Vercel or Netlify redeploys automatically
 
 ## 4. OAuth updates for production
 
 You must also update external dashboards manually:
 
-- Google Cloud OAuth: add your Vercel domain under authorized JavaScript origins
-- Supabase Auth URL configuration: add your Vercel domain as Site URL or Additional Redirect URL
+- Google Cloud OAuth: add your Vercel or Netlify domain under authorized JavaScript origins
+- Supabase Auth URL configuration: add your Vercel or Netlify domain as Site URL or Additional Redirect URL
 
 Without that, Google sign-in will fail on the live site even if local development works.

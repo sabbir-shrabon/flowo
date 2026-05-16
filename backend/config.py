@@ -3,6 +3,13 @@ from pydantic import Field
 from typing import Optional
 import os
 
+
+def _parse_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 class Settings(BaseSettings):
     # Supabase Configuration
     supabase_url: Optional[str] = Field(None, env="SUPABASE_URL")
@@ -29,6 +36,27 @@ class Settings(BaseSettings):
     mistral_model: str = Field("mistral-small-latest", env="MISTRAL_MODEL")
     mistral_agent_id: str = Field("ag_019d775d5d3c744fafefd4fbd5c99a66", env="MISTRAL_AGENT_ID")
 
+    cors_origins_raw: str = Field(
+        (
+            "http://localhost:3000,"
+            "http://localhost:5000,"
+            "http://localhost:8000,"
+            "http://127.0.0.1:3000,"
+            "http://127.0.0.1:5000,"
+            "http://127.0.0.1:8000,"
+            "https://flowo-pi.vercel.app"
+        ),
+        env="CORS_ORIGINS",
+    )
+    cors_origin_regex: str = Field(
+        r"https://.*\.(netlify\.app|vercel\.app)$",
+        env="CORS_ORIGIN_REGEX",
+    )
+
     model_config = SettingsConfigDict(env_file=os.path.join(os.path.dirname(__file__), ".env"), env_file_encoding="utf-8", extra="ignore")
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return _parse_csv(self.cors_origins_raw)
 
 settings = Settings()

@@ -274,12 +274,25 @@ def test_multi_plan_trims_without_shuffling_plan_order():
     assert result["selected_count"] > 0
 
 
+def test_overdue_plan_does_not_crash_scheduler():
+    store = _FakeStore()
+    plan, milestone = _make_plan(store, "Overdue", duration_days=2)
+    _add_tasks(store, plan, milestone, 4)
+
+    result = _run_with_store(store, date(2026, 5, 10))
+
+    assert result["selected_count"] > 0
+    assert len(result["tasks"]) > 0
+    assert result["tasks"][0].title == "Task 1"
+
+
 def run_tests():
     tests = [
         test_day_slices_are_ordered,
         test_completed_task_does_not_refill_locked_batch,
         test_missed_older_task_comes_first,
         test_multi_plan_trims_without_shuffling_plan_order,
+        test_overdue_plan_does_not_crash_scheduler,
     ]
     for test in tests:
         test()

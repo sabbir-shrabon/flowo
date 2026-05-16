@@ -191,7 +191,10 @@ class SchedulerService:
             if not remaining_undone:
                 tasks_per_day = 0
             else:
-                remaining_days = _remaining_working_days(plan, on_date)
+                # Overdue plans can have zero remaining working days left in their
+                # configured window. In that case we still need a sane daily slice
+                # for unfinished work instead of crashing on division by zero.
+                remaining_days = max(1, _remaining_working_days(plan, on_date))
                 tasks_per_day = max(1, ceil(len(remaining_undone) / remaining_days))
                 largest_plan_slice = max(largest_plan_slice, tasks_per_day)
 

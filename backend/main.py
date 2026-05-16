@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 try:
     from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -15,6 +15,7 @@ except ImportError:
     get_remote_address = None
 
 from backend.adaptive.routes.router import router as adaptive_router
+from backend.config import settings
 from backend.routers.chat import router as chat_router
 from backend.routers.conversations import router as conversations_router
 from backend.routers.system import router as system_router
@@ -59,11 +60,22 @@ async def runtime_error_handler(request: Request, exc: RuntimeError):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://flowo-pi.vercel.app"],
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/", tags=["system"])
+async def root():
+    return {"ok": True, "service": "Life Agent API", "health": "/api/health"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 app.include_router(chat_router)
 app.include_router(conversations_router)
