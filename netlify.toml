@@ -5,12 +5,22 @@
     if [ ! -d "flutter" ]; then \
       git clone https://github.com/flutter/flutter.git -b stable --depth 1; \
     fi && \
+    case "$SUPABASE_URL" in \
+      https://*) ;; \
+      *) echo "Invalid SUPABASE_URL. Expected full https:// URL, got: $SUPABASE_URL" && exit 1 ;; \
+    esac && \
+    [ -n "$SUPABASE_ANON_KEY" ] || (echo "Missing SUPABASE_ANON_KEY" && exit 1) && \
+    case "$API_BASE_URL" in \
+      https://*|http://localhost:*|http://127.0.0.1:*) ;; \
+      *) echo "Invalid API_BASE_URL. Expected https://... for production or localhost for local builds, got: $API_BASE_URL" && exit 1 ;; \
+    esac && \
+    [ -n "$GOOGLE_WEB_CLIENT_ID" ] || (echo "Missing GOOGLE_WEB_CLIENT_ID" && exit 1) && \
     flutter/bin/flutter pub get && \
     flutter/bin/flutter build web --release \
-      --dart-define=SUPABASE_URL=$https://luaijkhveihlfzbdalfw.supabase.co \
-      --dart-define=SUPABASE_ANON_KEY=$eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1YWlqa2h2ZWlobGZ6YmRhbGZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU3NDY2ODQsImV4cCI6MjA5MTMyMjY4NH0.x7WnYUzGBL7yla-dmDpMQmtUz79ZBii5XsIXHhtfrO0 \
-      --dart-define=API_BASE_URL=$https://flowo-1.onrender.com \
-      --dart-define=GOOGLE_WEB_CLIENT_ID=$294911446807-g08pqvu7kjjll8ltruue0lju5hhrkhu8.apps.googleusercontent.com
+      --dart-define=SUPABASE_URL=$SUPABASE_URL \
+      --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
+      --dart-define=API_BASE_URL=$API_BASE_URL \
+      --dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID
   """
 
 [[redirects]]
