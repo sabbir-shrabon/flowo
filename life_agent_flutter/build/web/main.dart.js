@@ -33920,7 +33920,7 @@ break
 default:throw A.h(A.e5("Illegal base64 string."))}return B.a3.dY(0,B.pA.bS(r))},
 bdH(){var s=B.c.bn("")
 if(s.length!==0)return s
-return"http://localhost:8000"},
+return"https://flowo-1.onrender.com"},
 aVZ(a){var s,r
 if(a==null)return"No response"
 if(typeof a=="string")return a
