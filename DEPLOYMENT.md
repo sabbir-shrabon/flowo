@@ -85,7 +85,11 @@ For Netlify:
 
 - Publish directory: `life_agent_flutter/build/web`
 - If you connect the whole repo, use the included [netlify.toml](/d:/my%20projects/my%20research/life%20agent/netlify.toml)
+- Add these Netlify environment variables before deploying:
+  `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `API_BASE_URL`, `GOOGLE_WEB_CLIENT_ID`
 - If you drag-and-drop deploy manually, upload the contents of `life_agent_flutter/build/web`
+
+If Netlify builds from Git, it must receive those values as environment variables because Flutter web reads them at build time through `--dart-define`. A plain `flutter build web --release` on Netlify will produce the same "Missing web build configuration" error you saw locally.
 
 Each frontend update flow:
 

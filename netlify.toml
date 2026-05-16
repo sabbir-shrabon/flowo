@@ -6,7 +6,11 @@
       git clone https://github.com/flutter/flutter.git -b stable --depth 1; \
     fi && \
     flutter/bin/flutter pub get && \
-    flutter/bin/flutter build web --release
+    flutter/bin/flutter build web --release \
+      --dart-define=SUPABASE_URL=$https://luaijkhveihlfzbdalfw.supabase.co \
+      --dart-define=SUPABASE_ANON_KEY=$eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx1YWlqa2h2ZWlobGZ6YmRhbGZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU3NDY2ODQsImV4cCI6MjA5MTMyMjY4NH0.x7WnYUzGBL7yla-dmDpMQmtUz79ZBii5XsIXHhtfrO0 \
+      --dart-define=API_BASE_URL=$https://flowo-1.onrender.com \
+      --dart-define=GOOGLE_WEB_CLIENT_ID=$294911446807-g08pqvu7kjjll8ltruue0lju5hhrkhu8.apps.googleusercontent.com
   """
 
 [[redirects]]

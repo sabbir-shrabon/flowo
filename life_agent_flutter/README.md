@@ -42,6 +42,15 @@ Or use the helper script from `life_agent_flutter/` after updating `.env`:
 
 If you prefer, copy `.env.example` as a reference for the keys you need (the app does not read `.env` automatically).
 
+For Netlify Git-based deploys, set these site environment variables in Netlify:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `API_BASE_URL`
+- `GOOGLE_WEB_CLIENT_ID`
+
+The root `netlify.toml` passes those values into Flutter with `--dart-define` during the Netlify build.
+
 For Flutter web Google sign-in, also configure these outside the repo:
 
 - Google Cloud OAuth authorized JavaScript origin: `http://localhost:5000`
