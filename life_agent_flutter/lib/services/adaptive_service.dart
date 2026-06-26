@@ -51,6 +51,44 @@ Future<TaskDetailResponse> getTaskDetail(String taskId) async {
   return TaskDetailResponse.fromJson(data);
 }
 
+Future<List<SubtaskResponse>> getSubtasks(String taskId) async {
+  final data = await _api.getJson('/api/adaptive/tasks/$taskId/subtasks');
+  return (data as List).map((s) => SubtaskResponse.fromJson(s)).toList();
+}
+
+Future<SubtaskResponse> createSubtask(String taskId, String title) async {
+  final data = await _api.postJson('/api/adaptive/tasks/$taskId/subtasks', {
+    'title': title,
+  });
+  return SubtaskResponse.fromJson(data);
+}
+
+Future<SubtaskResponse> patchSubtask(
+  String subtaskId, {
+  String? title,
+  bool? completed,
+  int? orderIndex,
+}) async {
+  final body = <String, dynamic>{};
+  if (title != null) body['title'] = title;
+  if (completed != null) body['completed'] = completed;
+  if (orderIndex != null) body['order_index'] = orderIndex;
+  final data = await _api.patchJson('/api/adaptive/subtasks/$subtaskId', body);
+  return SubtaskResponse.fromJson(data);
+}
+
+Future<void> deleteSubtask(String subtaskId) async {
+  await _api.delete('/api/adaptive/subtasks/$subtaskId');
+}
+
+Future<GenerateSubtasksResponse> generateSubtasks(String taskId) async {
+  final data = await _api.postJson(
+    '/api/adaptive/tasks/$taskId/subtasks/generate',
+    {},
+  );
+  return GenerateSubtasksResponse.fromJson(data);
+}
+
 // ── Plans ──────────────────────────────────────────────────────────────────────
 
 Future<List<PlanResponse>> listActivePlans() async {

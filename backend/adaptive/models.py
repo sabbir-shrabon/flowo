@@ -132,6 +132,17 @@ class TaskRow(BaseModel):
     updated_at: datetime
 
 
+class SubtaskRow(BaseModel):
+    """Subtask row owned by a parent task."""
+    id: UUID = Field(...)
+    task_id: UUID
+    title: str
+    completed: bool = False
+    order_index: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
 class MilestoneRow(BaseModel):
     """Full milestone row."""
     id: UUID = Field(...)

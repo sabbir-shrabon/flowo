@@ -16,17 +16,26 @@ class LocalCacheService {
   static const String _dailyScheduleBoxName = 'daily_schedule_cache';
   static const String _taskDetailsBoxName = 'task_details_box';
   static const String _pendingSyncsBoxName = 'pending_syncs_box';
+  static const String _settingsBoxName = 'app_settings_box';
+
+  // Settings keys
+  static const String kThemeMode = 'themeMode';
+  static const String kAccentColor = 'accentColor';
+  static const String kFontSize = 'fontSize';
+  static const String kUserMemory = 'userMemory';
 
   late Box<String> _plansBox;
   late Box<String> _dailyScheduleBox;
   late Box<String> _taskDetailsBox;
   late Box<String> _pendingSyncsBox;
+  late Box<String> _settingsBox;
 
   Future<void> init() async {
     _plansBox = await Hive.openBox<String>(_plansBoxName);
     _dailyScheduleBox = await Hive.openBox<String>(_dailyScheduleBoxName);
     _taskDetailsBox = await Hive.openBox<String>(_taskDetailsBoxName);
     _pendingSyncsBox = await Hive.openBox<String>(_pendingSyncsBoxName);
+    _settingsBox = await Hive.openBox<String>(_settingsBoxName);
     debugPrint('[CacheLayer] LocalCacheService initialized');
   }
 
@@ -35,7 +44,40 @@ class LocalCacheService {
     await _dailyScheduleBox.close();
     await _taskDetailsBox.close();
     await _pendingSyncsBox.close();
+    await _settingsBox.close();
     debugPrint('[CacheLayer] LocalCacheService disposed');
+  }
+
+  // ── App Settings ────────────────────────────────────────────────────────────
+
+  /// Saves an app setting. Value must be a String (serialize before calling).
+  Future<void> saveSetting(String key, String value) async {
+    try {
+      await _settingsBox.put(key, value);
+    } catch (e) {
+      debugPrint('[CacheLayer] Error saving setting "$key": $e');
+    }
+  }
+
+  /// Reads a persisted app setting. Returns null if not yet set.
+  String? getSetting(String key) {
+    try {
+      return _settingsBox.get(key);
+    } catch (e) {
+      debugPrint('[CacheLayer] Error reading setting "$key": $e');
+      return null;
+    }
+  }
+
+  /// Clears only the personal / account-bound settings (user memory note).
+  /// Device settings (theme, accent color, font size) are intentionally kept.
+  Future<void> clearPersonalSettings() async {
+    try {
+      await _settingsBox.delete(kUserMemory);
+      debugPrint('[CacheLayer] Cleared personal settings (userMemory)');
+    } catch (e) {
+      debugPrint('[CacheLayer] Error clearing personal settings: $e');
+    }
   }
 
   // ── Daily Schedule Cache ───────────────────────────────────────────────────
@@ -267,6 +309,8 @@ class LocalCacheService {
       await _plansBox.clear();
       await _taskDetailsBox.clear();
       await _pendingSyncsBox.clear();
+      // Also clear personal account-bound settings (not device settings)
+      await clearPersonalSettings();
       final duration = DateTime.now().difference(startTime).inMilliseconds;
       debugPrint('[CacheLayer] Cleared all cache in ${duration}ms');
     } catch (e) {

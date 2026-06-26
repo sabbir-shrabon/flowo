@@ -285,6 +285,15 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
     }
   }
 
+  Widget _centeredDesktopContent(Widget child) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final detail = _detail?.detail;
@@ -336,64 +345,66 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
           ),
         ],
         body: _loading
-            ? ListView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 8,
-                ),
-                children: [
-                  // Difficulty badge placeholder
-                  ShimmerLine(
-                    width: 60,
-                    height: 24,
-                    borderRadius: BorderRadius.circular(6),
+            ? _centeredDesktopContent(
+                ListView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
                   ),
-                  const SizedBox(height: 16),
-                  // Title
-                  ShimmerLine(height: 18),
-                  const SizedBox(height: 8),
-                  ShimmerLine(width: 200, height: 14),
-                  const SizedBox(height: 20),
-                  // Guide section
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: context.colors.surface,
-                      borderRadius: BorderRadius.circular(12),
+                  children: [
+                    // Difficulty badge placeholder
+                    ShimmerLine(
+                      width: 60,
+                      height: 24,
+                      borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    const SizedBox(height: 16),
+                    // Title
+                    ShimmerLine(height: 18),
+                    const SizedBox(height: 8),
+                    ShimmerLine(width: 200, height: 14),
+                    const SizedBox(height: 20),
+                    // Guide section
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: context.colors.surface,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ShimmerLine(width: 80, height: 14),
+                          const SizedBox(height: 10),
+                          ShimmerLine(height: 12),
+                          const SizedBox(height: 4),
+                          ShimmerLine(height: 12),
+                          const SizedBox(height: 4),
+                          ShimmerLine(width: 180, height: 12),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    // Action buttons
+                    Row(
                       children: [
-                        ShimmerLine(width: 80, height: 14),
-                        const SizedBox(height: 10),
-                        ShimmerLine(height: 12),
-                        const SizedBox(height: 4),
-                        ShimmerLine(height: 12),
-                        const SizedBox(height: 4),
-                        ShimmerLine(width: 180, height: 12),
+                        Expanded(
+                          child: ShimmerLine(
+                            height: 40,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ShimmerLine(
+                            height: 40,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  // Action buttons
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ShimmerLine(
-                          height: 40,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ShimmerLine(
-                          height: 40,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               )
             : _error != null
             ? Center(
@@ -419,104 +430,107 @@ class _TaskDetailScreenState extends ConsumerState<TaskDetailScreen> {
                 ),
               )
             : detail != null
-            ? RefreshIndicator(
-                onRefresh: _fetchDetail,
-                color: context.colors.accent,
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  children: [
-                    // Difficulty badge
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: diffColor.withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            diffLabel,
-                            style: TextStyle(
-                              color: diffColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        if (_detail!.generated)
+            ? _centeredDesktopContent(
+                RefreshIndicator(
+                  onRefresh: _fetchDetail,
+                  color: context.colors.accent,
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    children: [
+                      // Difficulty badge
+                      Row(
+                        children: [
                           Container(
-                            margin: const EdgeInsets.only(left: 8),
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
+                              horizontal: 10,
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: context.colors.info.withValues(
-                                alpha: 0.12,
-                              ),
+                              color: diffColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              'AI-Generated',
+                              diffLabel,
                               style: TextStyle(
-                                color: context.colors.info,
-                                fontSize: 10,
+                                color: diffColor,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
                           ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
+                          if (_detail!.generated)
+                            Container(
+                              margin: const EdgeInsets.only(left: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: context.colors.info.withValues(
+                                  alpha: 0.12,
+                                ),
+                              ),
+                              child: Text(
+                                'AI-Generated',
+                                style: TextStyle(
+                                  color: context.colors.info,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
 
-                    // Task guide widget
-                    TaskGuideWidget(detail: detail),
+                      // Task guide widget
+                      TaskGuideWidget(detail: detail),
 
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
 
-                    // Action buttons
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            onPressed: _acting != null
-                                ? null
-                                : () => _handleStatusAction(TaskStatus.done),
-                            icon: const Icon(Icons.check, size: 18),
-                            label: const Text('Done'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: context.colors.success,
+                      // Action buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              onPressed: _acting != null
+                                  ? null
+                                  : () => _handleStatusAction(TaskStatus.done),
+                              icon: const Icon(Icons.check, size: 18),
+                              label: const Text('Done'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: context.colors.success,
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: _acting != null
-                                ? null
-                                : () => _handleStatusAction(TaskStatus.skipped),
-                            icon: const Icon(Icons.skip_next, size: 18),
-                            label: const Text('Skip'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: context.colors.error,
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _acting != null
+                                  ? null
+                                  : () =>
+                                        _handleStatusAction(TaskStatus.skipped),
+                              icon: const Icon(Icons.skip_next, size: 18),
+                              label: const Text('Skip'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: context.colors.error,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
+                        ],
+                      ),
 
-                    const SizedBox(height: 20),
+                      const SizedBox(height: 20),
 
-                    // Chat section
-                    _buildChatSection(),
+                      // Chat section
+                      _buildChatSection(),
 
-                    const SizedBox(height: 80),
-                  ],
+                      const SizedBox(height: 80),
+                    ],
+                  ),
                 ),
               )
             : Center(

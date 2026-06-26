@@ -47,7 +47,12 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   final ScrollController _chatScrollController = ScrollController();
 
   bool _chatExpanded = false; // sidebar expanded (desktop/tablet)
-  bool _mobileChatExpanded = false; // bottom sheet expanded (mobile)
+
+  // Draggable Scrollable Chat state
+  late final ScrollController _todayScrollController;
+  final ValueNotifier<double> _mobileChatHeightNotifier = ValueNotifier<double>(48.0);
+  double _mobileChatHeight = 48.0;
+  bool _isDraggingChat = false;
 
   // Selected task detail state
   TaskDetailResponse? _selectedTaskDetail;
@@ -58,14 +63,31 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   @override
   void initState() {
     super.initState();
+    _todayScrollController = ScrollController();
     _fetchData();
   }
 
   @override
   void dispose() {
+    _todayScrollController.dispose();
+    _mobileChatHeightNotifier.dispose();
     _chatController.dispose();
     _chatScrollController.dispose();
     super.dispose();
+  }
+
+  void _triggerTodayScroll(double diff) {
+    if (diff != 0) {
+      _mobileChatHeightNotifier.value = _mobileChatHeight;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_todayScrollController.hasClients) {
+          final currentOffset = _todayScrollController.offset;
+          final maxScroll = _todayScrollController.position.maxScrollExtent;
+          final targetOffset = (currentOffset + diff).clamp(0.0, maxScroll);
+          _todayScrollController.jumpTo(targetOffset);
+        }
+      });
+    }
   }
 
   Future<void> _fetchData() async {
@@ -608,7 +630,13 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     }
   }
 
-  TaskResponse _copyTaskWithStatus(TaskResponse t, TaskStatus status) {
+  TaskResponse _copyTaskWithStatus(
+    TaskResponse t,
+    TaskStatus status, {
+    int? subtaskCount,
+    int? completedSubtaskCount,
+    bool? hasSubtasks,
+  }) {
     return TaskResponse(
       id: t.id,
       planId: t.planId,
@@ -622,6 +650,10 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       carryOverCount: t.carryOverCount,
       milestoneId: t.milestoneId,
       orderIndex: t.orderIndex,
+      taskIndex: t.taskIndex,
+      subtaskCount: subtaskCount ?? t.subtaskCount,
+      completedSubtaskCount: completedSubtaskCount ?? t.completedSubtaskCount,
+      hasSubtasks: hasSubtasks ?? t.hasSubtasks,
       durationMinutes: t.durationMinutes,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
@@ -634,31 +666,47 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   }
 
   Future<void> _handleChatTaskTap(TaskResponse task) async {
+    final planTitle = _schedule.plansMetadata[task.planId]?.title;
+    final milestoneTitle = task.milestoneId == null
+        ? null
+        : _schedule.milestonesMetadata[task.milestoneId!]?.title;
+    final result = await context.push<TaskWorkspaceResult>(
+      '/task-workspace',
+      extra: {
+        'task': task,
+        'planTitle': planTitle,
+        'milestoneTitle': milestoneTitle,
+      },
+    );
+    if (result == null || !mounted) return;
+    final updatedTasks = _tasks
+        .map(
+          (t) => t.id == result.taskId
+              ? _copyTaskWithStatus(
+                  t,
+                  result.isCompleted ? TaskStatus.done : t.status,
+                  subtaskCount: result.subtaskCount,
+                  completedSubtaskCount: result.completedSubtaskCount,
+                  hasSubtasks: result.hasSubtasks,
+                )
+              : t,
+        )
+        .toList();
     setState(() {
-      _selectedTaskId = task.id;
-      _selectedTaskTitle = task.title;
-      _selectedTaskDetail = null;
-      _taskDetailLoading = true;
-      _chatExpanded = true;
-      _mobileChatExpanded = true;
+      _tasks = updatedTasks;
+      _schedule = DailySchedule(
+        date: _schedule.date,
+        tasks: updatedTasks,
+        totalAvailable: _schedule.totalAvailable,
+        selectedCount: _schedule.selectedCount,
+        maxTasksPerDay: _schedule.maxTasksPerDay,
+        selectedTaskIds: _schedule.selectedTaskIds,
+        plansMetadata: _schedule.plansMetadata,
+        milestonesMetadata: _schedule.milestonesMetadata,
+        metadata: _schedule.metadata,
+        plansWorkingDay: _schedule.plansWorkingDay,
+      );
     });
-    _scrollChatToBottom();
-    try {
-      final detail = await getTaskDetail(task.id);
-      if (mounted) {
-        setState(() {
-          _selectedTaskDetail = detail;
-          _taskDetailLoading = false;
-        });
-        _scrollChatToBottom();
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _taskDetailLoading = false;
-        });
-      }
-    }
   }
 
   void _clearSelectedTask() {
@@ -838,6 +886,8 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
       todayAdaptRefreshProvider,
       (_, _) => _fetchDataAfterAdapt(),
     );
+
+    final screenHeight = MediaQuery.of(context).size.height;
 
     ref.listen(authProvider.select((s) => s.status), (prev, next) {
       // When user signs out, immediately clear UI state
@@ -1078,22 +1128,27 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
                   ),
                 ),
               Expanded(
-                child: RefreshIndicator(
-                  onRefresh: _hardRefresh,
-                  color: context.colors.accent,
-                  child: _loading
-                      ? _buildLoadingState()
-                      : _error != null
-                      ? _buildErrorState()
-                      : _tasks.isEmpty
-                      ? _buildEmptyState(firstName)
-                      : _buildTaskList(
-                          sortedPlanIds,
-                          orderByTaskId,
-                          visibleTasks,
-                          dayComplete,
-                          firstName,
-                        ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 860),
+                    child: RefreshIndicator(
+                      onRefresh: _hardRefresh,
+                      color: context.colors.accent,
+                      child: _loading
+                          ? _buildLoadingState()
+                          : _error != null
+                          ? _buildErrorState()
+                          : _tasks.isEmpty
+                          ? _buildEmptyState(firstName)
+                          : _buildTaskList(
+                              sortedPlanIds,
+                              orderByTaskId,
+                              visibleTasks,
+                              dayComplete,
+                              firstName,
+                            ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1117,15 +1172,16 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           if (MediaQuery.of(context).size.width >= 600 && _chatExpanded)
             _buildSidebarChat(),
 
-          // Mobile chat bar (narrow screens)
-          if (MediaQuery.of(context).size.width < 600) _buildMobileChatBar(),
+          // Draggable Mobile chat (mobile only)
+          if (MediaQuery.of(context).size.width < 600)
+            _buildDraggableMobileChat(screenHeight),
         ],
       ),
     );
   }
 
   // ── Chat panel (reusable content: messages + input) ──────────
-  Widget _buildChatPanel({bool compact = false}) {
+  Widget _buildChatPanel({bool compact = false, ScrollController? scrollController}) {
     final hasTask = _selectedTaskId != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1154,7 +1210,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         // Single scrollable area for task detail + chat messages
         Expanded(
           child: ListView(
-            controller: _chatScrollController,
+            controller: scrollController ?? _chatScrollController,
             padding: const EdgeInsets.only(bottom: 8),
             children: [
               // Task detail card
@@ -1350,116 +1406,190 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
     );
   }
 
-  // ── Mobile chat bar (Notion-style) ────────────────────────────
-  Widget _buildMobileChatBar() {
-    final screenHeight = MediaQuery.of(context).size.height;
-    final expandedHeight = screenHeight / 2;
+  // ── Mobile chat bar (DraggableScrollableSheet) ─────────────────
+  // ── Mobile chat bar (Draggable/Animated) ────────────────────────
+  Widget _buildDraggableMobileChat(double screenHeight) {
+    final minHeight = 48.0;
+    final defaultOpenHeight = screenHeight * 0.35;
+    final maxHeight = screenHeight - MediaQuery.of(context).padding.top;
+    final isCollapsed = _mobileChatHeight < 60.0;
 
-    return Positioned(
-      left: 0,
-      right: 0,
-      bottom: 0,
-      child: GestureDetector(
-        onVerticalDragUpdate: (details) {
-          if (_mobileChatExpanded && details.delta.dy > 0) {
-            setState(() => _mobileChatExpanded = false);
-          }
-        },
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOut,
-          height: _mobileChatExpanded ? expandedHeight : 48,
-          clipBehavior: Clip.hardEdge,
-          decoration: BoxDecoration(
-            color: context.colors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-            border: Border(
-              top: BorderSide(color: context.colors.border, width: 1),
-            ),
-          ),
-          child: _mobileChatExpanded
-              ? OverflowBox(
-                  minHeight: expandedHeight,
-                  maxHeight: expandedHeight,
-                  alignment: Alignment.topCenter,
-                  child: Column(
-                    children: [
-                      // Drag handle + collapse toggle
-                      GestureDetector(
-                        onTap: () =>
-                            setState(() => _mobileChatExpanded = false),
-                        child: Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 8,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'Today Chat',
-                                  style: TextStyle(
-                                    color: context.colors.textPrimary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              Icon(
-                                Icons.keyboard_arrow_down,
-                                color: context.colors.textMuted,
-                                size: 20,
-                              ),
-                            ],
-                          ),
-                        ),
+    final child = Container(
+      clipBehavior: Clip.hardEdge,
+      decoration: BoxDecoration(
+        color: context.colors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border(
+          top: BorderSide(color: context.colors.border, width: 1),
+        ),
+      ),
+      child: isCollapsed
+          ? GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                final diff = defaultOpenHeight - _mobileChatHeight;
+                setState(() {
+                  _mobileChatHeight = defaultOpenHeight;
+                });
+                _triggerTodayScroll(diff);
+              },
+              child: Container(
+                width: double.infinity,
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.chat_bubble_outline,
+                      color: context.colors.textSecondary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Today Chat',
+                      style: TextStyle(
+                        color: context.colors.textSecondary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
                       ),
-                      // Chat content
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: _buildChatPanel(compact: true),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : GestureDetector(
-                  onTap: () => setState(() => _mobileChatExpanded = true),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      Icons.keyboard_arrow_up,
+                      color: context.colors.textMuted,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : Column(
+              children: [
+                // Drag handle + collapse toggle
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragStart: (_) {
+                    setState(() {
+                      _isDraggingChat = true;
+                    });
+                  },
+                  onVerticalDragUpdate: (details) {
+                    final newHeight = (_mobileChatHeight - details.delta.dy).clamp(minHeight, maxHeight);
+                    final diff = newHeight - _mobileChatHeight;
+                    setState(() {
+                      _mobileChatHeight = newHeight;
+                    });
+                    _triggerTodayScroll(diff);
+                  },
+                  onVerticalDragEnd: (_) {
+                    setState(() {
+                      _isDraggingChat = false;
+                      // Snap logic: if near collapse, collapse. If near full, go full.
+                      if (_mobileChatHeight < screenHeight * 0.2) {
+                        final diff = minHeight - _mobileChatHeight;
+                        setState(() {
+                          _mobileChatHeight = minHeight;
+                        });
+                        _triggerTodayScroll(diff);
+                      } else if (_mobileChatHeight > screenHeight * 0.85) {
+                        final diff = maxHeight - _mobileChatHeight;
+                        setState(() {
+                          _mobileChatHeight = maxHeight;
+                        });
+                        _triggerTodayScroll(diff);
+                      }
+                    });
+                  },
+                  onTap: () {
+                    final diff = minHeight - _mobileChatHeight;
+                    setState(() {
+                      _mobileChatHeight = minHeight;
+                    });
+                    _triggerTodayScroll(diff);
+                  },
                   child: Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    height: 48,
-                    child: Row(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    child: Column(
                       children: [
-                        Icon(
-                          Icons.chat_bubble_outline,
-                          color: context.colors.textSecondary,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Today Chat',
-                          style: TextStyle(
-                            color: context.colors.textSecondary,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                        // Drag handle bar
+                        Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: 6),
+                          decoration: BoxDecoration(
+                            color: context.colors.borderStrong.withValues(alpha: 0.5),
+                            borderRadius: BorderRadius.circular(2),
                           ),
                         ),
-                        const Spacer(),
-                        Icon(
-                          Icons.keyboard_arrow_up,
-                          color: context.colors.textMuted,
-                          size: 18,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Today Chat',
+                                style: TextStyle(
+                                  color: context.colors.textPrimary,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.keyboard_arrow_down,
+                              color: context.colors.textMuted,
+                              size: 20,
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                 ),
-        ),
-      ),
+                // Chat content
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (constraints.maxHeight < 120) {
+                          return const SizedBox.shrink();
+                        }
+                        return _buildChatPanel(
+                          compact: true,
+                          scrollController: _chatScrollController,
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
+
+    if (_isDraggingChat) {
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: _mobileChatHeight,
+        child: child,
+      );
+    } else {
+      return Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          height: _mobileChatHeight,
+          child: child,
+        ),
+      );
+    }
   }
 
   Widget _buildLoadingState() {
@@ -1645,6 +1775,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         .toList();
 
     return CustomScrollView(
+      controller: _todayScrollController,
       slivers: [
         if (!hasInternet || _viewingOffline)
           SliverToBoxAdapter(
@@ -1726,7 +1857,18 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           SliverToBoxAdapter(child: _buildDayCompleteContent(firstName)),
 
         // Bottom padding
-        const SliverToBoxAdapter(child: SizedBox(height: 40)),
+        ValueListenableBuilder<double>(
+          valueListenable: _mobileChatHeightNotifier,
+          builder: (context, chatHeight, _) {
+            return SliverToBoxAdapter(
+              child: SizedBox(
+                height: MediaQuery.of(context).size.width < 600
+                    ? chatHeight
+                    : 40.0,
+              ),
+            );
+          },
+        ),
       ],
     );
   }
@@ -2096,6 +2238,17 @@ class _TaskRow extends StatelessWidget {
                       child: Text(task.title),
                     ),
                   ),
+                  if (task.hasSubtasks) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      '${task.completedSubtaskCount} of ${task.subtaskCount} steps done',
+                      style: TextStyle(
+                        color: context.colors.textMuted,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),

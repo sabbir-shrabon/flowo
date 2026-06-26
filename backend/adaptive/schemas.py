@@ -92,6 +92,9 @@ class TaskResponse(BaseModel):
     milestone_id: UUID | None = None
     order_index: int = 0
     task_index: int = 0  # 1-based global position in plan roadmap
+    subtask_count: int = 0
+    completed_subtask_count: int = 0
+    has_subtasks: bool = False
     duration_minutes: int | None = None
     detail_json: dict | None = None
     rescheduled_from: date | None = None
@@ -113,6 +116,47 @@ class TaskUpdateRequest(BaseModel):
     task_id: UUID
     status: TaskStatus = Field(..., description="New status: done, skipped, or partial")
     feedback_text: str | None = None
+
+
+class SubtaskResponse(BaseModel):
+    id: UUID
+    task_id: UUID
+    title: str
+    completed: bool = False
+    order_index: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubtaskCreateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=199)
+
+
+class SubtaskUpdateRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=199)
+    completed: bool | None = None
+    order_index: int | None = None
+
+
+class SubtaskCountsResponse(BaseModel):
+    total: int = 0
+    completed: int = 0
+
+
+class SubtaskSuggestion(BaseModel):
+    title: str = Field(..., min_length=1, max_length=199)
+
+
+class GenerateSubtasksResponse(BaseModel):
+    suggestions: list[SubtaskSuggestion] = Field(default_factory=list)
+
+
+class TaskWorkspaceResult(BaseModel):
+    task_id: str = Field(..., alias="taskId")
+    is_completed: bool = Field(..., alias="isCompleted")
+    subtask_count: int = Field(..., alias="subtaskCount")
+    completed_subtask_count: int = Field(..., alias="completedSubtaskCount")
+    has_subtasks: bool = Field(..., alias="hasSubtasks")
 
 
 class PullExtraTasksRequest(BaseModel):
@@ -438,5 +482,3 @@ class TaskHistoryListResponse(BaseModel):
     """Grouped task history response for the history screen."""
     history: list[TaskHistoryResponse]
     total: int
-
-

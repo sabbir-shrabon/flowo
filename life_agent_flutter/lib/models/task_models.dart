@@ -16,6 +16,9 @@ class TaskResponse {
   final String? milestoneId;
   final int orderIndex;
   final int taskIndex; // 1-based global position in plan roadmap
+  final int subtaskCount;
+  final int completedSubtaskCount;
+  final bool hasSubtasks;
   final int? durationMinutes;
   final String createdAt;
   final String updatedAt;
@@ -39,6 +42,9 @@ class TaskResponse {
     this.milestoneId,
     required this.orderIndex,
     this.taskIndex = 0,
+    this.subtaskCount = 0,
+    this.completedSubtaskCount = 0,
+    this.hasSubtasks = false,
     this.durationMinutes,
     required this.createdAt,
     required this.updatedAt,
@@ -70,6 +76,9 @@ class TaskResponse {
       milestoneId: json['milestone_id'] as String?,
       orderIndex: json['order_index'] as int? ?? 0,
       taskIndex: json['task_index'] as int? ?? 0,
+      subtaskCount: json['subtask_count'] as int? ?? 0,
+      completedSubtaskCount: json['completed_subtask_count'] as int? ?? 0,
+      hasSubtasks: json['has_subtasks'] as bool? ?? false,
       durationMinutes: json['duration_minutes'] as int?,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
@@ -98,6 +107,9 @@ class TaskResponse {
       'milestone_id': milestoneId,
       'order_index': orderIndex,
       'task_index': taskIndex,
+      'subtask_count': subtaskCount,
+      'completed_subtask_count': completedSubtaskCount,
+      'has_subtasks': hasSubtasks,
       'duration_minutes': durationMinutes,
       'created_at': createdAt,
       'updated_at': updatedAt,
@@ -106,6 +118,118 @@ class TaskResponse {
       'struggling': struggling,
       'skip_reason': skipReason,
       'skipped_at': skippedAt,
+    };
+  }
+}
+
+class SubtaskResponse {
+  final String id;
+  final String taskId;
+  final String title;
+  final bool completed;
+  final int orderIndex;
+  final String createdAt;
+  final String updatedAt;
+
+  const SubtaskResponse({
+    required this.id,
+    required this.taskId,
+    required this.title,
+    this.completed = false,
+    this.orderIndex = 0,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SubtaskResponse.fromJson(Map<String, dynamic> json) {
+    return SubtaskResponse(
+      id: json['id'] as String,
+      taskId: json['task_id'] as String,
+      title: json['title'] as String,
+      completed: json['completed'] as bool? ?? false,
+      orderIndex: json['order_index'] as int? ?? 0,
+      createdAt: json['created_at'] as String,
+      updatedAt: json['updated_at'] as String,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'task_id': taskId,
+      'title': title,
+      'completed': completed,
+      'order_index': orderIndex,
+      'created_at': createdAt,
+      'updated_at': updatedAt,
+    };
+  }
+}
+
+class SubtaskSuggestion {
+  final String title;
+
+  const SubtaskSuggestion({required this.title});
+
+  factory SubtaskSuggestion.fromJson(Map<String, dynamic> json) {
+    return SubtaskSuggestion(title: json['title'] as String);
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'title': title};
+  }
+}
+
+class GenerateSubtasksResponse {
+  final List<SubtaskSuggestion> suggestions;
+
+  const GenerateSubtasksResponse({required this.suggestions});
+
+  factory GenerateSubtasksResponse.fromJson(Map<String, dynamic> json) {
+    return GenerateSubtasksResponse(
+      suggestions: (json['suggestions'] as List? ?? [])
+          .map((s) => SubtaskSuggestion.fromJson(Map<String, dynamic>.from(s)))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'suggestions': suggestions.map((s) => s.toJson()).toList()};
+  }
+}
+
+class TaskWorkspaceResult {
+  final String taskId;
+  final bool isCompleted;
+  final int subtaskCount;
+  final int completedSubtaskCount;
+  final bool hasSubtasks;
+
+  const TaskWorkspaceResult({
+    required this.taskId,
+    required this.isCompleted,
+    required this.subtaskCount,
+    required this.completedSubtaskCount,
+    required this.hasSubtasks,
+  });
+
+  factory TaskWorkspaceResult.fromJson(Map<String, dynamic> json) {
+    return TaskWorkspaceResult(
+      taskId: json['taskId'] as String,
+      isCompleted: json['isCompleted'] as bool,
+      subtaskCount: json['subtaskCount'] as int,
+      completedSubtaskCount: json['completedSubtaskCount'] as int,
+      hasSubtasks: json['hasSubtasks'] as bool,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'taskId': taskId,
+      'isCompleted': isCompleted,
+      'subtaskCount': subtaskCount,
+      'completedSubtaskCount': completedSubtaskCount,
+      'hasSubtasks': hasSubtasks,
     };
   }
 }

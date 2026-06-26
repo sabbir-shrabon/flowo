@@ -42,6 +42,7 @@ from backend.adaptive.schemas import (
     GenerateFromAnswersRequest,
     GenerateFromChatRequest,
     GenerateFromChatResponse,
+    GenerateSubtasksResponse,
     MissingField,
     DailyTasksResponse,
     EventCreateRequest,
@@ -70,6 +71,11 @@ from backend.adaptive.schemas import (
     EpisodicMemoryResponse,
     PlanUpdateRequest,
     SkipRequest,
+    SubtaskCountsResponse,
+    SubtaskCreateRequest,
+    SubtaskResponse,
+    SubtaskSuggestion,
+    SubtaskUpdateRequest,
     TaskDetailResponse,
     TaskHistoryListResponse,
     TaskHistoryResponse,
@@ -91,7 +97,7 @@ from backend.adaptive.services.task_generator import generate_for_milestone
 from backend.adaptive.services.scheduler import scheduler_service
 from backend.adaptive.services.task_detail_generator import task_detail_generator_service
 from backend.adaptive.services.context_builder import build as build_context
-from backend.lib.llm import chatResponse
+from backend.lib.llm import LLMProviderError, chatResponse
 
 router = APIRouter(prefix="/api/adaptive", tags=["adaptive"])
 
@@ -112,6 +118,24 @@ Do not include any markdown blocks or code fences. Output JSON only.
 
 Milestone: {milestone}
 Tasks: {tasks}
+"""
+
+SUBTASK_GENERATION_PROMPT = """You generate checklist subtasks for one parent task.
+
+Return EXACTLY a JSON object with this shape:
+{{"suggestions":[{{"title":"short action"}}]}}
+
+Rules:
+- Produce 4 to 7 suggestions.
+- Titles must be short, actionable, non-empty, and under 200 characters.
+- Do not duplicate existing subtasks.
+- Output JSON only.
+
+Plan: {plan_title}
+Milestone: {milestone_title}
+Parent task: {task_title}
+Task description: {task_description}
+Existing subtasks: {existing_subtasks}
 """
 
 
@@ -296,12 +320,26 @@ async def update_task_status(
     payload: TaskUpdateRequest,
     user_id: UUID = Depends(get_current_user),
 ):
+    return await _complete_task_status_flow(
+        task_id=payload.task_id,
+        status=payload.status,
+        user_id=user_id,
+        feedback_text=payload.feedback_text,
+    )
+
+
+async def _complete_task_status_flow(
+    task_id: UUID,
+    status: TaskStatus,
+    user_id: UUID,
+    feedback_text: str | None = None,
+) -> TaskResponse:
     try:
-        task = adaptive_store.get_task(payload.task_id)
+        task = adaptive_store.get_task(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        if payload.status == TaskStatus.pending:
+        if status == TaskStatus.pending:
             # Undoing a task - delete history record if it exists
             adaptive_store.delete_task_history(task.id)
             updated = adaptive_store.update_task_status(task.id, TaskStatus.pending)
@@ -315,9 +353,9 @@ async def update_task_status(
             TaskStatus.skipped: EventType.skipped,
             TaskStatus.partial: EventType.partial,
         }
-        event_type = status_to_event.get(payload.status)
+        event_type = status_to_event.get(status)
         if event_type is None:
-            raise HTTPException(status_code=400, detail=f"Cannot update to status '{payload.status.value}'. Only done, skipped, partial allowed.")
+            raise HTTPException(status_code=400, detail=f"Cannot update to status '{status.value}'. Only done, skipped, partial allowed.")
 
         # Record event (also updates task status internally)
         events_service.record(
@@ -325,11 +363,11 @@ async def update_task_status(
             task_id=task.id,
             plan_id=task.plan_id,
             event_type=event_type,
-            feedback_text=payload.feedback_text,
+            feedback_text=feedback_text,
         )
 
         # Create history record when task is marked done
-        if payload.status == TaskStatus.done:
+        if status == TaskStatus.done:
             plan = adaptive_store.get_plan(task.plan_id)
             milestone_name = None
             task_index = 0  # 1-based position in plan roadmap
@@ -382,17 +420,17 @@ async def update_task_status(
                 logger.warning("Failed to create task history: %s", e)
 
         # Auto-adjustment: if skipped, reschedule to tomorrow
-        if payload.status == TaskStatus.skipped:
+        if status == TaskStatus.skipped:
             adjuster_service.handle_skip(user_id, task.id)
 
         # Real-time adaptation: trigger adaptation engine on any status change
         try:
-            on_task_status_changed(user_id, task.id, payload.status)
+            on_task_status_changed(user_id, task.id, status)
         except Exception as e:
             logger.warning("Real-time adaptation trigger failed: %s", e)
 
         # Auto milestone completion check when task is done
-        if payload.status == TaskStatus.done and task.milestone_id:
+        if status == TaskStatus.done and task.milestone_id:
             try:
                 is_complete = adaptive_store.check_milestone_completion(user_id, task.milestone_id)
                 if is_complete:
@@ -414,7 +452,7 @@ async def update_task_status(
 
         updated = adaptive_store.get_task(task.id)
         if updated is None:
-            task.status = payload.status
+            task.status = status
             updated = task
         return _task_to_response(updated)
     except HTTPException:
@@ -427,6 +465,153 @@ async def update_task_status(
 
 
 # ── Task Detail (lazy generation) ──────────────────────────────────────────────
+
+@router.get("/tasks/{task_id}/subtasks", response_model=list[SubtaskResponse])
+async def list_subtasks(
+    task_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    task = _require_user_task(task_id, user_id)
+    return [_subtask_to_response(s) for s in adaptive_store.list_subtasks_by_task(task.id)]
+
+
+@router.post("/tasks/{task_id}/subtasks", response_model=SubtaskResponse)
+async def create_subtask(
+    task_id: UUID,
+    payload: SubtaskCreateRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    task = _require_user_task(task_id, user_id)
+    order_index = adaptive_store.next_subtask_order_index(task.id)
+    subtask = adaptive_store.create_subtask(task.id, payload.title, order_index)
+    return _subtask_to_response(subtask)
+
+
+@router.post("/tasks/{task_id}/subtasks/generate", response_model=GenerateSubtasksResponse)
+async def generate_subtasks(
+    task_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    task = _require_user_task(task_id, user_id)
+    plan = adaptive_store.get_plan(task.plan_id)
+    milestone_title = "None"
+    if task.milestone_id:
+        milestones = adaptive_store.get_milestones_for_plan(user_id, task.plan_id)
+        milestone = next((ms for ms in milestones if ms.id == task.milestone_id), None)
+        if milestone:
+            milestone_title = milestone.title
+
+    existing = adaptive_store.list_subtasks_by_task(task.id)
+    prompt = SUBTASK_GENERATION_PROMPT.format(
+        plan_title=plan.title if plan else "Untitled Plan",
+        milestone_title=milestone_title,
+        task_title=task.title,
+        task_description=task.description or "None",
+        existing_subtasks=", ".join(s.title for s in existing) or "None",
+    )
+    try:
+        parsed, raw = _try_parse_json(chatResponse(prompt))
+    except LLMProviderError as exc:
+        logger.warning("Subtask generation failed for task %s: %s", task.id, exc)
+        raise HTTPException(status_code=503, detail="AI subtask generation is temporarily unavailable.")
+    except Exception as exc:
+        logger.warning("Subtask generation failed for task %s: %s", task.id, exc)
+        raise HTTPException(status_code=503, detail="AI subtask generation failed.")
+
+    if not parsed or not isinstance(parsed.get("suggestions"), list):
+        logger.warning("Invalid subtask generation response for task %s: %s", task.id, raw)
+        raise HTTPException(status_code=503, detail="AI returned an invalid subtask response.")
+
+    suggestions: list[SubtaskSuggestion] = []
+    seen: set[str] = set()
+    for item in parsed["suggestions"]:
+        title = item.get("title") if isinstance(item, dict) else item
+        if not isinstance(title, str):
+            continue
+        title = title.strip()
+        normalized = title.lower()
+        if not title or len(title) >= 200 or normalized in seen:
+            continue
+        seen.add(normalized)
+        suggestions.append(SubtaskSuggestion(title=title))
+
+    if len(suggestions) < 4:
+        raise HTTPException(status_code=503, detail="AI returned too few valid subtask suggestions.")
+    return GenerateSubtasksResponse(suggestions=suggestions[:7])
+
+
+@router.patch("/subtasks/{subtask_id}", response_model=SubtaskResponse)
+async def update_subtask(
+    subtask_id: UUID,
+    payload: SubtaskUpdateRequest,
+    user_id: UUID = Depends(get_current_user),
+):
+    existing = adaptive_store.get_subtask(subtask_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    task = _require_user_task(existing.task_id, user_id)
+
+    updated = adaptive_store.update_subtask(
+        subtask_id,
+        title=payload.title,
+        completed=payload.completed,
+        order_index=payload.order_index,
+    )
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update subtask")
+
+    should_auto_complete = (
+        payload.completed is True
+        and existing.completed is False
+        and task.status != TaskStatus.done
+        and adaptive_store.all_subtasks_completed(task.id)
+    )
+    if should_auto_complete:
+        try:
+            await _complete_task_status_flow(task.id, TaskStatus.done, user_id)
+        except Exception:
+            adaptive_store.update_subtask(
+                subtask_id,
+                title=existing.title,
+                completed=existing.completed,
+                order_index=existing.order_index,
+            )
+            raise
+
+    return _subtask_to_response(updated)
+
+
+@router.delete("/subtasks/{subtask_id}")
+async def delete_subtask(
+    subtask_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    existing = adaptive_store.get_subtask(subtask_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    _require_user_task(existing.task_id, user_id)
+    if not adaptive_store.delete_subtask(subtask_id):
+        raise HTTPException(status_code=500, detail="Failed to delete subtask")
+    return {"deleted": True}
+
+
+@router.get("/tasks/{task_id}/subtasks/count", response_model=SubtaskCountsResponse)
+async def count_subtasks(
+    task_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    task = _require_user_task(task_id, user_id)
+    return SubtaskCountsResponse(**adaptive_store.count_subtasks_by_task(task.id))
+
+
+@router.get("/tasks/{task_id}/subtasks/all-completed")
+async def all_subtasks_completed(
+    task_id: UUID,
+    user_id: UUID = Depends(get_current_user),
+):
+    task = _require_user_task(task_id, user_id)
+    return {"allCompleted": adaptive_store.all_subtasks_completed(task.id)}
+
 
 @router.get("/tasks/{task_id}/detail", response_model=TaskDetailResponse)
 async def get_task_detail(
@@ -2304,7 +2489,8 @@ def _plan_to_response(p, progress_pct: float = 0.0, total_tasks: int = 0, remain
     )
 
 
-def _task_to_response(t, task_index: int = 0) -> TaskResponse:
+def _task_to_response(t, task_index: int = 0, subtask_counts: dict[str, int] | None = None) -> TaskResponse:
+    subtask_counts = subtask_counts or adaptive_store.count_subtasks_by_task(t.id)
     return TaskResponse(
         id=t.id,
         plan_id=t.plan_id,
@@ -2319,6 +2505,9 @@ def _task_to_response(t, task_index: int = 0) -> TaskResponse:
         milestone_id=t.milestone_id,
         order_index=t.order_index,
         task_index=task_index,
+        subtask_count=subtask_counts["total"],
+        completed_subtask_count=subtask_counts["completed"],
+        has_subtasks=subtask_counts["total"] > 0,
         duration_minutes=t.duration_minutes,
         detail_json=t.detail_json,
         rescheduled_from=getattr(t, 'rescheduled_from', None),
@@ -2330,10 +2519,33 @@ def _task_to_response(t, task_index: int = 0) -> TaskResponse:
     )
 
 
+def _subtask_to_response(s) -> SubtaskResponse:
+    return SubtaskResponse(
+        id=s.id,
+        task_id=s.task_id,
+        title=s.title,
+        completed=s.completed,
+        order_index=s.order_index,
+        created_at=s.created_at,
+        updated_at=s.updated_at,
+    )
+
+
+def _require_user_task(task_id: UUID, user_id: UUID):
+    task = adaptive_store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    plan = adaptive_store.get_plan(task.plan_id)
+    if plan is None or plan.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
+
+
 def _tasks_with_indices(tasks: list) -> list[TaskResponse]:
     """Calculate task_index for each task based on its position in the plan roadmap."""
     if not tasks:
         return []
+    subtask_counts_by_id = adaptive_store.count_subtasks_batch([t.id for t in tasks])
     
     # Group tasks by plan
     by_plan: dict[UUID, list] = {}
@@ -2391,7 +2603,7 @@ def _tasks_with_indices(tasks: list) -> list[TaskResponse]:
         idx = plan_task_indices.get(t.plan_id, {}).get(t.id, 0)
         if idx == 0:
             logger.warning(f"_tasks_with_indices: task {t.id} has no index in plan {t.plan_id}")
-        result.append(_task_to_response(t, idx))
+        result.append(_task_to_response(t, idx, subtask_counts_by_id.get(str(t.id))))
     return result
 
 

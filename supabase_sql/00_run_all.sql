@@ -114,6 +114,16 @@ create table if not exists tasks (
     updated_at       timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+create table if not exists subtasks (
+    id          uuid default uuid_generate_v4() primary key,
+    task_id     uuid not null references tasks(id) on delete cascade,
+    title       text not null,
+    completed   boolean not null default false,
+    order_index integer not null default 0,
+    created_at  timestamp with time zone default timezone('utc'::text, now()) not null,
+    updated_at  timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
 -- ── Roadmap Folders ───────────────────────────────────────────────────────
 create table if not exists roadmap_folders (
     id          uuid default uuid_generate_v4() primary key,
@@ -254,6 +264,7 @@ create index if not exists idx_events_created_at on events(created_at);
 
 create index if not exists idx_adjustments_user on adjustment_suggestions(user_id);
 create index if not exists idx_adjustments_status on adjustment_suggestions(status);
+create index if not exists idx_subtasks_task_id on subtasks(task_id);
 
 -- ── Triggers (auto updated_at) ────────────────────────────────────────────
 drop trigger if exists conversations_updated_at on conversations;
@@ -269,6 +280,11 @@ create trigger plans_updated_at
 drop trigger if exists tasks_updated_at on tasks;
 create trigger tasks_updated_at
     before update on tasks
+    for each row execute function update_updated_at_column();
+
+drop trigger if exists subtasks_updated_at on subtasks;
+create trigger subtasks_updated_at
+    before update on subtasks
     for each row execute function update_updated_at_column();
 
 drop trigger if exists user_preferences_updated_at on user_preferences;
@@ -333,6 +349,28 @@ create policy "Users can manage tasks in own plans"
     on tasks for all
     using (plan_id in (select id from plans where user_id = auth.uid()))
     with check (plan_id in (select id from plans where user_id = auth.uid()));
+
+-- Subtasks
+alter table subtasks enable row level security;
+drop policy if exists "Users can manage subtasks in own tasks" on subtasks;
+create policy "Users can manage subtasks in own tasks"
+    on subtasks for all
+    using (
+        task_id in (
+            select tasks.id
+            from tasks
+            join plans on plans.id = tasks.plan_id
+            where plans.user_id = auth.uid()
+        )
+    )
+    with check (
+        task_id in (
+            select tasks.id
+            from tasks
+            join plans on plans.id = tasks.plan_id
+            where plans.user_id = auth.uid()
+        )
+    );
 
 -- Roadmap Folders
 alter table roadmap_folders enable row level security;

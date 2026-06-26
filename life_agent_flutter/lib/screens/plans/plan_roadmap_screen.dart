@@ -117,30 +117,25 @@ class _PlanRoadmapScreenState extends ConsumerState<PlanRoadmapScreen> {
   }
 
   Future<void> _handleTaskTap(TaskResponse task) async {
-    setState(() {
-      _selectedTaskId = task.id;
-      _selectedTaskTitle = task.title;
-      _selectedTaskDetail = null;
-      _taskDetailLoading = true;
-      _chatExpanded = true;
-      _mobileChatExpanded = true;
-    });
-    _scrollChatToBottom();
-    try {
-      final detail = await getTaskDetail(task.id);
-      if (mounted) {
-        setState(() {
-          _selectedTaskDetail = detail;
-          _taskDetailLoading = false;
-        });
-        _scrollChatToBottom();
+    final planTitle = _detail?.plan.title;
+    String? milestoneTitle;
+    for (final milestone in _detail?.milestones ?? <MilestoneResponse>[]) {
+      if (milestone.id == task.milestoneId) {
+        milestoneTitle = milestone.title;
+        break;
       }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _taskDetailLoading = false;
-        });
-      }
+    }
+    final result = await context.push<TaskWorkspaceResult>(
+      '/task-workspace',
+      extra: {
+        'task': task,
+        'planTitle': planTitle,
+        'milestoneTitle': milestoneTitle,
+      },
+    );
+    if (result != null) {
+      await _fetchDetail();
+      ref.read(todayRefreshProvider.notifier).state++;
     }
   }
 
@@ -1272,6 +1267,17 @@ class _RoadmapMilestoneNodeState extends State<_RoadmapMilestoneNode>
                                               : null,
                                         ),
                                       ),
+                                      if (task.hasSubtasks) ...[
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          '${task.completedSubtaskCount} of ${task.subtaskCount} steps done',
+                                          style: TextStyle(
+                                            color: context.colors.textMuted,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
                                       if (task.dueDate != null ||
                                           task.durationMinutes != null)
                                         Padding(

@@ -21,6 +21,7 @@ from backend.adaptive.models import (
     PlanPriority,
     PlanRow,
     PlanStatus,
+    SubtaskRow,
     TaskDifficulty,
     TaskHistoryRow,
     TaskRow,
@@ -274,6 +275,97 @@ class AdaptiveStore:
         # Invalidate milestone insight cache since task status changed
         self.clear_milestone_insight_for_task(task_id)
         return self._map_task(res[1][0])
+
+    # ── Subtasks ─────────────────────────────────────────────────────────
+
+    def list_subtasks_by_task(self, task_id: UUID) -> list[SubtaskRow]:
+        """Return subtasks for a task, unchecked first, then by order_index."""
+        res = self.client.table("subtasks").select().eq("task_id", str(task_id)).execute()
+        rows = res[1] if res and res[1] else []
+        subtasks = [self._map_subtask(row) for row in rows]
+        return sorted(subtasks, key=lambda s: (s.completed, s.order_index, s.created_at))
+
+    def create_subtask(self, task_id: UUID, title: str, order_index: int) -> SubtaskRow:
+        res = self.client.table("subtasks").insert({
+            "task_id": str(task_id),
+            "title": title,
+            "order_index": order_index,
+        }).execute()
+        if not res or not res[1]:
+            raise RuntimeError(f"Failed to create subtask for task_id={task_id}")
+        return self._map_subtask(res[1][0])
+
+    def next_subtask_order_index(self, task_id: UUID) -> int:
+        res = (
+            self.client.table("subtasks")
+            .select("order_index")
+            .eq("task_id", str(task_id))
+            .execute()
+        )
+        rows = res[1] if res and res[1] else []
+        if not rows:
+            return 0
+        return max(int(row.get("order_index") or 0) for row in rows) + 1
+
+    def get_subtask(self, subtask_id: UUID) -> SubtaskRow | None:
+        res = self.client.table("subtasks").select().eq("id", str(subtask_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_subtask(res[1][0])
+
+    def update_subtask(
+        self,
+        subtask_id: UUID,
+        title: str | None = None,
+        completed: bool | None = None,
+        order_index: int | None = None,
+    ) -> SubtaskRow | None:
+        updates: dict = {}
+        if title is not None:
+            updates["title"] = title
+        if completed is not None:
+            updates["completed"] = completed
+        if order_index is not None:
+            updates["order_index"] = order_index
+        if not updates:
+            return self.get_subtask(subtask_id)
+        res = self.client.table("subtasks").update(updates).eq("id", str(subtask_id)).execute()
+        if not res or not res[1]:
+            return None
+        return self._map_subtask(res[1][0])
+
+    def delete_subtask(self, subtask_id: UUID) -> bool:
+        res = self.client.table("subtasks").delete().eq("id", str(subtask_id)).execute()
+        return bool(res and res[1])
+
+    def count_subtasks_by_task(self, task_id: UUID) -> dict[str, int]:
+        subtasks = self.list_subtasks_by_task(task_id)
+        completed = sum(1 for subtask in subtasks if subtask.completed)
+        return {"total": len(subtasks), "completed": completed}
+
+    def count_subtasks_batch(self, task_ids: list[UUID]) -> dict[str, dict[str, int]]:
+        if not task_ids:
+            return {}
+        ids = [str(task_id) for task_id in task_ids]
+        res = (
+            self.client.table("subtasks")
+            .select("task_id,completed")
+            .in_("task_id", ids)
+            .execute()
+        )
+        counts = {task_id: {"total": 0, "completed": 0} for task_id in ids}
+        for row in (res[1] if res and res[1] else []):
+            task_id = str(row.get("task_id"))
+            if task_id not in counts:
+                counts[task_id] = {"total": 0, "completed": 0}
+            counts[task_id]["total"] += 1
+            if row.get("completed"):
+                counts[task_id]["completed"] += 1
+        return counts
+
+    def all_subtasks_completed(self, task_id: UUID) -> bool:
+        counts = self.count_subtasks_by_task(task_id)
+        return counts["total"] > 0 and counts["total"] == counts["completed"]
 
     def get_tasks_by_ids(self, task_ids: list[UUID]) -> list[TaskRow]:
         """Fetch tasks by IDs and preserve the caller's order."""
@@ -922,6 +1014,17 @@ class AdaptiveStore:
             struggling=row.get("struggling", False),
             skip_reason=row.get("skip_reason"),
             skipped_at=skipped_at,
+            created_at=self._safe_date(row.get("created_at")),
+            updated_at=self._safe_date(row.get("updated_at") or row.get("created_at")),
+        )
+
+    def _map_subtask(self, row: dict) -> SubtaskRow:
+        return SubtaskRow(
+            id=self._safe_uuid(row.get("id")),
+            task_id=self._safe_uuid(row.get("task_id")),
+            title=row.get("title") or "",
+            completed=bool(row.get("completed", False)),
+            order_index=row.get("order_index", 0),
             created_at=self._safe_date(row.get("created_at")),
             updated_at=self._safe_date(row.get("updated_at") or row.get("created_at")),
         )
