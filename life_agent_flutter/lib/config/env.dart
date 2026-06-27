@@ -10,18 +10,29 @@
 /// Example:
 /// `flutter run --dart-define=SUPABASE_URL=... --dart-define=SUPABASE_ANON_KEY=... --dart-define=API_BASE_URL=http://10.0.2.2:8000`
 class Env {
-  static const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-  static const supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+  static const supabaseUrl = String.fromEnvironment(
+    'SUPABASE_URL',
+    defaultValue: '',
+  );
+  static const supabaseAnonKey = String.fromEnvironment(
+    'SUPABASE_ANON_KEY',
+    defaultValue: '',
+  );
   static const googleWebClientId = String.fromEnvironment(
     'GOOGLE_WEB_CLIENT_ID',
+    defaultValue: '',
   );
   static const googleIosClientId = String.fromEnvironment(
     'GOOGLE_IOS_CLIENT_ID',
+    defaultValue: '',
   );
 
   /// Optional override; if not provided we fall back to platform defaults
   /// in `ApiConfig`.
-  static const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+  static const apiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: '',
+  );
 
   static String requireSupabaseUrl() {
     if (supabaseUrl.trim().isEmpty) {
@@ -50,4 +61,3 @@ class Env {
     return googleWebClientId;
   }
 }
-

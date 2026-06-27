@@ -39,5 +39,7 @@ class AuthService {
     );
   }
 
-  Future<void> signOutGoogle() async {}
+  Future<void> signOutGoogle() async {
+    await _supabase.auth.signOut();
+  }
 }

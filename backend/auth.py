@@ -10,6 +10,7 @@ Usage in any router:
 from __future__ import annotations
 
 from uuid import UUID
+import os
 import time
 
 import jwt
@@ -58,25 +59,28 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    try:
-        header = jwt.get_unverified_header(token)
-        alg = header.get("alg", "HS256")
-    except Exception:
-        alg = "HS256"
-
-    # In development or if the algorithm is unsupported with our symmetric secret,
-    # we can bypass signature verification to avoid blockages.
-    if not settings.supabase_jwt_secret or settings.supabase_jwt_secret == "YOUR_JWT_SECRET_HERE" or alg != "HS256":
+    dev_mode = os.getenv("DEV_MODE", "").lower() == "true"
+    if dev_mode:
         try:
-            payload = jwt.decode(token, options={"verify_signature": False}, algorithms=[alg])
-            # Validate token hasn't expired even without signature verification
+            payload = jwt.decode(token, options={"verify_signature": False})
             _validate_token_expiry(payload)
             return UUID(payload["sub"])
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token (unverified): {exc}",
+                detail=f"Invalid token (development mode): {exc}",
+                headers={"WWW-Authenticate": "Bearer"},
             )
+
+    if (
+        not settings.supabase_jwt_secret
+        or settings.supabase_jwt_secret == "YOUR_JWT_SECRET_HERE"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="JWT verification is not configured.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         payload = jwt.decode(
@@ -95,14 +99,9 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.InvalidTokenError as exc:
-        header_info = "unknown"
-        try:
-            header_info = str(jwt.get_unverified_header(token))
-        except Exception:
-            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {exc}. Header: {header_info}",
+            detail=f"Invalid token: {exc}",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except (KeyError, ValueError) as exc:

@@ -1,22 +1,24 @@
+[[plugins]]
+  package = "netlify-plugin-cache"
+    [plugins.inputs]
+    paths = ["flutter"]
+
 [build]
   base = "life_agent_flutter"
   publish = "build/web"
   command = """
-    if [ ! -d "flutter" ]; then \
-      git clone https://github.com/flutter/flutter.git -b stable --depth 1; \
-    fi && \
-    case "$SUPABASE_URL" in \
-      https://*) ;; \
-      *) echo "Invalid SUPABASE_URL. Expected full https:// URL, got: $SUPABASE_URL" && exit 1 ;; \
-    esac && \
-    [ -n "$SUPABASE_ANON_KEY" ] || (echo "Missing SUPABASE_ANON_KEY" && exit 1) && \
-    case "$API_BASE_URL" in \
-      https://*|http://localhost:*|http://127.0.0.1:*) ;; \
-      *) echo "Invalid API_BASE_URL. Expected https://... for production or localhost for local builds, got: $API_BASE_URL" && exit 1 ;; \
-    esac && \
-    [ -n "$GOOGLE_WEB_CLIENT_ID" ] || (echo "Missing GOOGLE_WEB_CLIENT_ID" && exit 1) && \
-    flutter/bin/flutter pub get && \
-    flutter/bin/flutter build web --release \
+    set -e
+    export FLUTTER_HOME="./flutter"
+    if [ ! -d "$FLUTTER_HOME" ]; then
+      echo "--- Installing Flutter SDK (first build only, cached for future builds) ---"
+      git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$FLUTTER_HOME"
+    else
+      echo "--- Using cached Flutter SDK ---"
+    fi
+    export PATH="$PATH:$FLUTTER_HOME/bin"
+    flutter config --no-analytics
+    flutter pub get
+    flutter build web --release \
       --dart-define=SUPABASE_URL=$SUPABASE_URL \
       --dart-define=SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY \
       --dart-define=API_BASE_URL=$API_BASE_URL \

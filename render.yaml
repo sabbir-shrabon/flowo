@@ -4,5 +4,13 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    preDeployCommand: >-
+      sh -c 'for var in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_JWT_SECRET SUPABASE_ANON_KEY MISTRAL_API_KEY; do [ -n "$(eval echo \$$var)" ] || { echo "Missing required env var: $var"; exit 1; }; done'
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/health
+    healthCheckInterval: 300
+    autoDeploy: true
+    restartPolicy: on-failure
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11

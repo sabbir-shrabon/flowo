@@ -49,14 +49,20 @@ class Settings(BaseSettings):
         env="CORS_ORIGINS",
     )
     cors_origin_regex: str = Field(
-        r"https://.*\.(netlify\.app|vercel\.app)$",
+        r"https://([a-z0-9-]+\.)*(netlify\.app|vercel\.app)(:\d+)?$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
         env="CORS_ORIGIN_REGEX",
     )
 
-    model_config = SettingsConfigDict(env_file=os.path.join(os.path.dirname(__file__), ".env"), env_file_encoding="utf-8", extra="ignore")
+    _env_file = os.path.join(os.path.dirname(__file__), ".env")
+    model_config = SettingsConfigDict(
+        env_file=_env_file if os.path.exists(_env_file) else None,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @property
     def cors_origins(self) -> list[str]:
         return _parse_csv(self.cors_origins_raw)
 
 settings = Settings()
+

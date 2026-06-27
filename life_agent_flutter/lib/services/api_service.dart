@@ -81,7 +81,28 @@ class ApiService {
 /// Dio interceptor that handles 401 responses.
 class _AuthInterceptor extends Interceptor {
   @override
-  void onError(DioException err, ErrorInterceptorHandler handler) {
+  Future<void> onError(
+    DioException err,
+    ErrorInterceptorHandler handler,
+  ) async {
+    if (err.response?.statusCode == 401 &&
+        err.requestOptions.extra['retriedAfterRefresh'] != true) {
+      try {
+        final supabase = Supabase.instance.client;
+        await supabase.auth.refreshSession();
+        final newToken = supabase.auth.currentSession?.accessToken;
+
+        if (newToken != null) {
+          err.requestOptions.extra['retriedAfterRefresh'] = true;
+          err.requestOptions.headers['Authorization'] = 'Bearer $newToken';
+          final response = await Dio().fetch(err.requestOptions);
+          return handler.resolve(response);
+        }
+      } catch (_) {
+        await Supabase.instance.client.auth.signOut();
+      }
+    }
+
     handler.next(err);
   }
 }
