@@ -13,7 +13,7 @@ class ApiConfig {
         return 'http://localhost:8000';
       }
       throw StateError(
-        'Missing API_BASE_URL. Rebuild the web app with --dart-define=API_BASE_URL=https://your-backend.onrender.com',
+        'Missing API_BASE_URL. Provide it through --dart-define=API_BASE_URL or the Netlify site environment variables.',
       );
     }
     try {

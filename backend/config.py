@@ -37,15 +37,7 @@ class Settings(BaseSettings):
     mistral_agent_id: str = Field("ag_019d775d5d3c744fafefd4fbd5c99a66", env="MISTRAL_AGENT_ID")
 
     cors_origins_raw: str = Field(
-        (
-            "http://localhost:3000,"
-            "http://localhost:5000,"
-            "http://localhost:8000,"
-            "http://127.0.0.1:3000,"
-            "http://127.0.0.1:5000,"
-            "http://127.0.0.1:8000,"
-            "https://flowo-pi.vercel.app"
-        ),
+        "",
         env="CORS_ORIGINS",
     )
     cors_origin_regex: str = Field(
