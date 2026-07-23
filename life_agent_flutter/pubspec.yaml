@@ -38,7 +38,7 @@ dependencies:
   # Detect network connectivity changes
   connectivity_plus: ^6.1.0
   # Android background sync (WorkManager wrapper)
-  workmanager: ^0.5.2
+  workmanager: ^0.9.0
   # File-system path for Hive on desktop/mobile
   path_provider: ^2.1.4
 
