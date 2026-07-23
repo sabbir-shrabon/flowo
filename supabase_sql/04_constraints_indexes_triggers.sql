@@ -28,8 +28,20 @@ alter table tasks add constraint tasks_difficulty_check
 -- ── Indexes ───────────────────────────────────────────────────────────────
 
 -- Memory indexes
+create index if not exists idx_goals_user_id on goals(user_id);
+create index if not exists idx_plans_goal_id on plans(goal_id);
+create index if not exists idx_plans_user_id on plans(user_id);
+create index if not exists idx_tasks_plan_id on tasks(plan_id);
+create index if not exists idx_tasks_parent_id on tasks(parent_id);
+create index if not exists idx_roadmap_folders_user_id on roadmap_folders(user_id);
+create index if not exists idx_roadmaps_folder_id on roadmaps(folder_id);
+create index if not exists idx_roadmaps_user_id on roadmaps(user_id);
+create index if not exists idx_conversations_user_id on conversations(user_id);
+
 create index if not exists idx_memory_user_id on memory(user_id);
 create index if not exists idx_memory_user_key on memory(user_id, key);
+create index if not exists idx_memory_goal_id on memory(goal_id);
+create index if not exists idx_plans_memory_id on plans(memory_id);
 
 -- Event indexes
 create index if not exists idx_events_user_id on events(user_id);
@@ -40,6 +52,7 @@ create index if not exists idx_events_created_at on events(created_at);
 
 -- Adjustment suggestion indexes
 create index if not exists idx_adjustments_user on adjustment_suggestions(user_id);
+create index if not exists idx_adjustments_plan_id on adjustment_suggestions(plan_id);
 create index if not exists idx_adjustments_status on adjustment_suggestions(status);
 
 -- ── Triggers (updated_at) ────────────────────────────────────────────────

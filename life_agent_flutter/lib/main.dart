@@ -50,6 +50,7 @@ class StartupErrorApp extends StatelessWidget {
     final missingBuildConfig =
         message.contains('SUPABASE_URL') ||
         message.contains('SUPABASE_ANON_KEY') ||
+        message.contains('API_BASE_URL') ||
         message.contains('GOOGLE_WEB_CLIENT_ID');
 
     return MaterialApp(

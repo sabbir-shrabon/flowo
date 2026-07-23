@@ -2,7 +2,7 @@
 -- Step 2: Core Tables
 -- Run AFTER 01_extensions_and_helpers.sql
 -- Tables: users, goals, plans, tasks, roadmap_folders, roadmaps,
---         conversations, chat_history
+--         conversations, llm_test_logs
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ── Users profile table ───────────────────────────────────────────────────
@@ -30,7 +30,6 @@ create table if not exists goals (
 create table if not exists plans (
     id              uuid default uuid_generate_v4() primary key,
     goal_id         uuid references goals(id) on delete cascade,
-    memory_id       uuid references memory(id) on delete set null,
     user_id         uuid references users(id) on delete cascade,
     title           text,
     status          text not null default 'active',
@@ -84,7 +83,7 @@ create table if not exists roadmaps (
 -- Each row = one full chat session. messages stored as JSONB array.
 create table if not exists conversations (
     id          uuid default uuid_generate_v4() primary key,
-    user_id     uuid references auth.users(id) on delete cascade not null,
+    user_id     uuid references users(id) on delete cascade not null,
     title       text not null default 'New Conversation',
     messages    jsonb not null default '[]'::jsonb,
     archived    boolean not null default false,
@@ -92,10 +91,10 @@ create table if not exists conversations (
     updated_at  timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- ── chat_history (legacy, kept for reference) ─────────────────────────────
-create table if not exists chat_history (
+-- ── LLM test logs ─────────────────────────────────────────────────────────
+-- Diagnostic records from the unauthenticated /api/test-llm endpoint.
+create table if not exists llm_test_logs (
     id          uuid default uuid_generate_v4() primary key,
-    user_id     uuid references users(id) on delete cascade,
     role        text not null,
     content     text not null,
     created_at  timestamp with time zone default timezone('utc'::text, now()) not null

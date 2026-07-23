@@ -810,6 +810,15 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                     ],
                   ),
 
+                // Keep Settings available even before sign-in.
+                if (isUnauthenticated)
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    leading: Icon(Icons.settings_outlined, size: 20, color: context.colors.textSecondary),
+                    title: Text('Settings', style: TextStyle(color: context.colors.textSecondary, fontSize: 14)),
+                    onTap: () => showAppSettingsDialog(context),
+                  ),
                 // Footer: User section or Sign-in prompt
                 Container(
                   decoration: BoxDecoration(

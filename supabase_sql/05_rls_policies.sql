@@ -110,11 +110,7 @@ create policy "Users can manage own suggestions"
     using (auth.uid() = user_id)
     with check (auth.uid() = user_id);
 
--- ── Chat History RLS ─────────────────────────────────────────────────────
-alter table chat_history enable row level security;
-
-drop policy if exists "Users can manage own chat history" on chat_history;
-create policy "Users can manage own chat history"
-    on chat_history for all
-    using (auth.uid() = user_id)
-    with check (auth.uid() = user_id);
+-- ── LLM test logs RLS ────────────────────────────────────────────────────
+-- This table is written by the server with the service role and is not
+-- exposed to authenticated client users.
+alter table llm_test_logs enable row level security;

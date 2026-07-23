@@ -976,9 +976,7 @@ class _UpgradePane extends ConsumerWidget {
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-            onPressed: () {
-              // TODO: navigate to billing / upgrade page
-            },
+            onPressed: () => _showAccountManagementUnavailable(context),
             icon: const Icon(Icons.open_in_new, size: 17),
             label: const Text('Manage your account'),
             style: FilledButton.styleFrom(
@@ -996,6 +994,25 @@ class _UpgradePane extends ConsumerWidget {
           ),
         ),
       ],
+    );
+  }
+
+  void _showAccountManagementUnavailable(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Account management'),
+        content: const Text(
+          'Account and billing management is not available yet. '
+          'You can continue using the current plan.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 }

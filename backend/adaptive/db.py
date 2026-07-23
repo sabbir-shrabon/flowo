@@ -382,7 +382,7 @@ class AdaptiveStore:
         try:
             res = (
                 self.client.table("daily_task_batches")
-                .select()
+                .select("*,daily_task_batch_items(task_id,is_extra,order_index)")
                 .eq("user_id", str(user_id))
                 .eq("date", on_date.isoformat())
                 .limit(1)
@@ -393,7 +393,12 @@ class AdaptiveStore:
             return None
         if not res or not res[1]:
             return None
-        return res[1][0]
+        batch = res[1][0]
+        items = sorted(batch.pop("daily_task_batch_items", []) or [], key=lambda row: row.get("order_index", 0))
+        if items:
+            batch["task_ids"] = [row["task_id"] for row in items]
+            batch["extra_task_ids"] = [row["task_id"] for row in items if row.get("is_extra")]
+        return batch
 
     def create_daily_task_batch(
         self,
@@ -426,7 +431,19 @@ class AdaptiveStore:
             return None
         if not res or not res[1]:
             return None
-        return res[1][0]
+        batch = res[1][0]
+        batch_id = batch.get("id")
+        if batch_id and task_ids:
+            self.client.table("daily_task_batch_items").upsert([
+                {
+                    "batch_id": batch_id,
+                    "task_id": str(task_id),
+                    "is_extra": False,
+                    "order_index": index,
+                }
+                for index, task_id in enumerate(task_ids)
+            ], on_conflict="batch_id,task_id").execute()
+        return batch
 
     def append_daily_task_batch_tasks(
         self,
@@ -447,6 +464,17 @@ class AdaptiveStore:
                 existing_ids.append(task_id)
             if task_id not in existing_extra_ids:
                 existing_extra_ids.append(task_id)
+        batch_id = batch.get("id")
+        if batch_id and extra_task_ids:
+            self.client.table("daily_task_batch_items").upsert([
+                {
+                    "batch_id": batch_id,
+                    "task_id": str(task_id),
+                    "is_extra": True,
+                    "order_index": len(existing_ids) - len(extra_task_ids) + index,
+                }
+                for index, task_id in enumerate(extra_task_ids)
+            ], on_conflict="batch_id,task_id").execute()
         try:
             res = (
                 self.client.table("daily_task_batches")

@@ -25,8 +25,8 @@ def test_llm(data: TestPrompt) -> dict[str, Any]:
         persisted = False
         if supabase:
             try:
-                # We'll log the test in a 'chat_history' table
-                supabase.table("chat_history").insert({
+                # Store diagnostic LLM requests separately from user conversations.
+                supabase.table("llm_test_logs").insert({
                     "role": "system",
                     "content": f"Test prompt: {data.prompt} => {response}"
                 }).execute()

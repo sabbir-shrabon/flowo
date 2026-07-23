@@ -69,18 +69,10 @@ GoRouter _createRouter(Ref ref) {
     initialLocation: '/today',
     refreshListenable: _AuthNotifierStream(ref),
     redirect: (context, state) {
-      final authStatus = ref.read(authProvider).status;
-      final currentLocation = state.matchedLocation;
-
-      // After sign-in or sign-out, redirect to /today
-      // - unauthenticated: user just signed out, go to today (clean state)
-      // - authenticated but coming from non-app location (e.g., after sign-in)
-      if (authStatus == AuthStatus.unauthenticated &&
-          currentLocation != '/today') {
-        return '/today';
-      }
-
-      return null; // no redirect
+      // Navigation is available while signed out. Individual screens and API
+      // calls handle authentication-required actions instead of silently
+      // sending the user back to Today.
+      return null;
     },
     routes: [
       ShellRoute(

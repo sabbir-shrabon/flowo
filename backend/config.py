@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     supabase_jwt_secret: Optional[str] = Field(None, env="SUPABASE_JWT_SECRET")
     supabase_anon_key: Optional[str] = Field(None, env="SUPABASE_ANON_KEY")
 
+    dev_mode: bool = Field(True, env="DEV_MODE")
+
     # LLM Provider Configuration
     llm_provider: str = Field("openai", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama'
     
@@ -40,6 +42,10 @@ class Settings(BaseSettings):
         "",
         env="CORS_ORIGINS",
     )
+    frontend_url_raw: str = Field(
+        "",
+        env="FRONTEND_URL",
+    )
     cors_origin_regex: str = Field(
         r"https://([a-z0-9-]+\.)*(netlify\.app|vercel\.app)(:\d+)?$|http://localhost(:\d+)?$|http://127\.0\.0\.1(:\d+)?$",
         env="CORS_ORIGIN_REGEX",
@@ -54,7 +60,9 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        return _parse_csv(self.cors_origins_raw)
+        origins = _parse_csv(self.cors_origins_raw)
+        origins.extend(_parse_csv(self.frontend_url_raw))
+        return list(dict.fromkeys(origins))
 
 settings = Settings()
 

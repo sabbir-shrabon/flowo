@@ -19,7 +19,21 @@ class ApiService {
   );
 
   Future<String?> _getAccessToken() async {
-    final session = Supabase.instance.client.auth.currentSession;
+    final supabase = Supabase.instance.client;
+    var session = supabase.auth.currentSession;
+    if (session == null) return null;
+
+    // Refresh before sending an expired or nearly expired JWT.
+    final expiresAt = session.expiresAt;
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    if (expiresAt != null && expiresAt - now < 60) {
+      try {
+        final response = await supabase.auth.refreshSession();
+        session = response.session;
+      } catch (_) {
+        // Keep the local session; let the request report its real error.
+      }
+    }
     return session?.accessToken;
   }
 
@@ -99,7 +113,7 @@ class _AuthInterceptor extends Interceptor {
           return handler.resolve(response);
         }
       } catch (_) {
-        await Supabase.instance.client.auth.signOut();
+        // Do not sign out on an API 401. It may be a backend JWT configuration issue.
       }
     }
 

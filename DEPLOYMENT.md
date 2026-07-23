@@ -24,20 +24,21 @@ Environment variables you will need to add in Render:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `SUPABASE_ANON_KEY`
-- `CORS_ORIGINS`
+- `FRONTEND_URL`
 - `LLM_PROVIDER`
 - Provider-specific keys you actually use, such as `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, or `GROQ_API_KEY`
 
-Recommended `CORS_ORIGINS` value:
+Recommended `FRONTEND_URL` value:
 
 ```text
-http://localhost:3000,http://localhost:5000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5000,http://127.0.0.1:8000,https://YOUR_SITE.netlify.app,https://YOUR_SITE.vercel.app
+https://YOUR_SITE.netlify.app
 ```
 
 Notes:
 
 - The backend package lives in `backend/`, so the start command must be `uvicorn backend.main:app`.
 - Render free tier sleeps after inactivity.
+- `CORS_ORIGINS` is still supported for comma-separated extra origins, but `FRONTEND_URL` is the easiest setting for the deployed Netlify URL. The default `CORS_ORIGIN_REGEX` also allows Netlify preview and production domains.
 
 ## 2. Flutter web production build
 
@@ -87,6 +88,8 @@ For Netlify:
 - If you connect the whole repo, use the included [netlify.toml](/d:/my%20projects/my%20research/life%20agent/netlify.toml)
 - Add these Netlify environment variables before deploying:
   `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `API_BASE_URL`, `GOOGLE_WEB_CLIENT_ID`
+- Set `API_BASE_URL` to your Render backend URL, for example:
+  `https://YOUR-RENDER-SERVICE.onrender.com`
 - If you drag-and-drop deploy manually, upload the contents of `life_agent_flutter/build/web`
 
 If Netlify builds from Git, it must receive those values as environment variables because Flutter web reads them at build time through `--dart-define`. A plain `flutter build web --release` on Netlify will produce the same "Missing web build configuration" error you saw locally.

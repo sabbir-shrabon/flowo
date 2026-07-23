@@ -640,7 +640,16 @@ class _AiPlanWizardState extends ConsumerState<AiPlanWizard>
 
   Widget _feedbackBtn(String label, Color color) {
     return OutlinedButton(
-      onPressed: () {},
+      onPressed: () {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Thanks for your feedback: $label'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      },
       style: OutlinedButton.styleFrom(
         foregroundColor: color,
         side: BorderSide(color: color.withValues(alpha: 0.4)),

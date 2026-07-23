@@ -73,11 +73,11 @@ class _AuthModalDialogState extends ConsumerState<_AuthModalDialog> {
     });
 
     try {
-      final supabase = Supabase.instance.client.auth;
+      final auth = ref.read(authProvider.notifier);
       if (_isSignUp) {
-        await supabase.signUp(email: email, password: password);
+        await auth.signUp(email, password);
       } else {
-        await supabase.signInWithPassword(email: email, password: password);
+        await auth.signIn(email, password);
       }
       if (mounted) {
         Navigator.of(context).pop(true);

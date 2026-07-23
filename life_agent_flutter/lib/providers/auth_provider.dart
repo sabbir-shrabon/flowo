@@ -64,11 +64,33 @@ class AuthNotifier extends StateNotifier<AppAuthState> {
   }
 
   Future<void> signIn(String email, String password) async {
-    await _supabase.auth.signInWithPassword(email: email, password: password);
+    final response = await _supabase.auth.signInWithPassword(
+      email: email,
+      password: password,
+    );
+    final session = response.session;
+    if (session != null) {
+      state = AppAuthState(
+        status: AuthStatus.authenticated,
+        user: session.user,
+        session: session,
+      );
+    }
   }
 
   Future<void> signUp(String email, String password) async {
-    await _supabase.auth.signUp(email: email, password: password);
+    final response = await _supabase.auth.signUp(
+      email: email,
+      password: password,
+    );
+    final session = response.session;
+    if (session != null) {
+      state = AppAuthState(
+        status: AuthStatus.authenticated,
+        user: session.user,
+        session: session,
+      );
+    }
   }
 
   Future<void> signInWithGoogle() async {
