@@ -1202,7 +1202,7 @@ class _LlmPaneState extends State<_LlmPane> {
         _sectionTitle(context, 'AI Models', 'Bring your own API key to use premium LLMs.'),
         const SizedBox(height: 24),
         DropdownButtonFormField<String>(
-          value: _provider,
+          initialValue: _provider,
           dropdownColor: Theme.of(context).colorScheme.surface,
           decoration: InputDecoration(
             labelText: 'Provider',

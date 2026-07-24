@@ -546,37 +546,39 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     Row(
                       children: [
                         if (_messages.isNotEmpty)
-                      TextButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _messages = [];
-                            _activeConversationId = null;
-                            _lastLoadedConvId = null;
-                          });
-                        },
-                        icon: const Icon(Icons.add_comment_outlined, size: 16),
-                        label: const Text(
-                          'New Chat',
-                          style: TextStyle(fontSize: 13),
-                        ),
-                      ),
-                    if (_messages.isNotEmpty)
-                      TextButton.icon(
-                        onPressed: _savingPlan ? null : _handleSaveAsPlan,
-                        icon: _savingPlan
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.save_outlined, size: 16),
-                        label: Text(
-                          _savingPlan ? 'Saving…' : 'Save as Plan',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
+                          TextButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _messages = [];
+                                _activeConversationId = null;
+                                _lastLoadedConvId = null;
+                              });
+                            },
+                            icon: const Icon(Icons.add_comment_outlined, size: 16),
+                            label: const Text(
+                              'New Chat',
+                              style: TextStyle(fontSize: 13),
+                            ),
+                          ),
+                        if (_messages.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: _savingPlan ? null : _handleSaveAsPlan,
+                            icon: _savingPlan
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Icon(Icons.save_outlined, size: 16),
+                            label: Text(
+                              _savingPlan ? 'Saving…' : 'Save as Plan',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),

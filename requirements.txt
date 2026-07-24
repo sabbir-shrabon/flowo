@@ -11,3 +11,4 @@ python-dateutil==2.9.0.post0
 APScheduler==3.10.4
 supabase==2.15.0
 slowapi==0.1.9
+cryptography==42.0.5
