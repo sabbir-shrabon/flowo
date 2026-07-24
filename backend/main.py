@@ -19,6 +19,7 @@ from backend.config import settings
 from backend.routers.chat import router as chat_router
 from backend.routers.conversations import router as conversations_router
 from backend.routers.system import router as system_router
+from backend.routers.settings import router as settings_router
 
 limiter = Limiter(key_func=get_remote_address) if Limiter and get_remote_address else None
 
@@ -81,3 +82,4 @@ app.include_router(chat_router)
 app.include_router(conversations_router)
 app.include_router(system_router)
 app.include_router(adaptive_router)
+app.include_router(settings_router)

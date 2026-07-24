@@ -15,7 +15,7 @@ except ImportError:
     get_remote_address = None
 
 from backend.auth import get_current_user
-from backend.lib.mistral_provider import asendChat, asendChatGuided, MistralProviderError
+from backend.lib.llm_client import asend_chat, asend_chat_guided, LLMProviderError
 from backend.adaptive.db import adaptive_store
 from backend.adaptive.models import PlanStatus, TaskStatus
 from backend.adaptive.schemas import PlanChatAction
@@ -110,10 +110,10 @@ Respond with ONLY a JSON object: {"intent": "<intent>", "task_name": "<extracted
 Do not include any other text."""
 
 
-async def _classify_intent(message: str) -> dict:
+async def _classify_intent(message: str, user_id: UUID) -> dict:
     """Lightweight LLM call to classify user intent. Returns dict with intent, task_name, plan_name."""
     try:
-        raw = await asendChat([
+        raw = await asend_chat(user_id, [
             {"role": "system", "content": INTENT_CLASSIFY_PROMPT},
             {"role": "user", "content": message},
         ])
@@ -321,7 +321,7 @@ async def chat_endpoint(
             guided_prompt = GUIDED_SYSTEM_PROMPT
             if mentioned_plan_id and context_block:
                 guided_prompt = f"{PLAN_ACTIONS_SYSTEM_PROMPT}\n\n=== CURRENT PLAN CONTEXT ===\n{context_block}\n\n{GUIDED_SYSTEM_PROMPT}"
-            reply = await asendChatGuided(data.message, route_type, guided_prompt)
+            reply = await asend_chat_guided(user_id, data.message, route_type, guided_prompt)
             return {"reply": reply, "route_type": route_type}
 
         # Regular chat handler — build messages from history if provided
@@ -329,8 +329,8 @@ async def chat_endpoint(
         chat_messages.append({"role": "user", "content": data.message})
 
         # ── Run main chat + intent classification IN PARALLEL ────────────────
-        raw_reply_coro = asendChat(chat_messages, system=system_prompt)
-        intent_coro = _classify_intent(data.message)
+        raw_reply_coro = asend_chat(user_id, chat_messages, system=system_prompt)
+        intent_coro = _classify_intent(data.message, user_id)
         raw_reply, intent_data = await asyncio.gather(raw_reply_coro, intent_coro)
 
         # Parse plan-actions if a plan was mentioned
@@ -345,7 +345,7 @@ async def chat_endpoint(
             reply = f"{reply}\n\n_{adjustment_note}_"
 
         return {"reply": reply, "actions": [a.model_dump() for a in plan_actions], "mentioned_plan": mentioned_plan_title}
-    except MistralProviderError as e:
+    except LLMProviderError as e:
         detail = str(e)
         logger.error("mistral_error=%s", detail)
         raise HTTPException(status_code=500, detail=detail)

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     supabase_anon_key: Optional[str] = Field(None, env="SUPABASE_ANON_KEY")
 
     dev_mode: bool = Field(True, env="DEV_MODE")
+    encryption_master_key: Optional[str] = Field(None, env="ENCRYPTION_MASTER_KEY")
 
     # LLM Provider Configuration
     llm_provider: str = Field("openai", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama'

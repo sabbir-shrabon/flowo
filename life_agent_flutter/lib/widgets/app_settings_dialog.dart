@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../theme/app_theme.dart';
 import '../providers/auth_provider.dart';
+import '../services/api_service.dart';
 import '../app.dart'
     show
         themeModeProvider,
@@ -30,6 +31,7 @@ enum _SettingsSection {
   appearance,
   accentColor,
   fontSize,
+  llm,
   dataControl,
   upgrade,
   logout,
@@ -40,6 +42,7 @@ extension _SettingsSectionExt on _SettingsSection {
     _SettingsSection.appearance => 'Appearance',
     _SettingsSection.accentColor => 'Accent Color',
     _SettingsSection.fontSize => 'Font Size',
+    _SettingsSection.llm => 'AI Models',
     _SettingsSection.dataControl => 'Data & Privacy',
     _SettingsSection.upgrade => 'Upgrade',
     _SettingsSection.logout => 'Logout',
@@ -49,6 +52,7 @@ extension _SettingsSectionExt on _SettingsSection {
     _SettingsSection.appearance => Icons.palette_outlined,
     _SettingsSection.accentColor => Icons.color_lens_outlined,
     _SettingsSection.fontSize => Icons.text_fields,
+    _SettingsSection.llm => Icons.smart_toy_outlined,
     _SettingsSection.dataControl => Icons.shield_outlined,
     _SettingsSection.upgrade => Icons.star_outline,
     _SettingsSection.logout => Icons.logout,
@@ -343,6 +347,7 @@ class _SettingsSectionPaneState extends ConsumerState<_SettingsSectionPane> {
         _SettingsSection.appearance => _AppearancePane(),
         _SettingsSection.accentColor => const _AccentColorPane(),
         _SettingsSection.fontSize => _FontSizePane(),
+        _SettingsSection.llm => const _LlmPane(),
         _SettingsSection.dataControl => _DataControlPane(),
         _SettingsSection.upgrade => _UpgradePane(),
         _SettingsSection.logout => _LogoutPane(),
@@ -1120,4 +1125,134 @@ Widget _infoRow(BuildContext context, String label, String value) {
       ],
     ),
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LLM MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LlmPane extends StatefulWidget {
+  const _LlmPane();
+  @override
+  State<_LlmPane> createState() => _LlmPaneState();
+}
+
+class _LlmPaneState extends State<_LlmPane> {
+  bool _isLoading = true;
+  String _provider = 'mistral';
+  String _model = 'mistral-small-latest';
+  String? _maskedKey;
+  final _keyController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final res = await ApiService().getJson('/api/settings/llm');
+      if (mounted) {
+        setState(() {
+          _provider = res['provider'] ?? 'mistral';
+          _model = res['model'] ?? 'mistral-small-latest';
+          _maskedKey = res['api_key'];
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    final key = _keyController.text.trim();
+    setState(() => _isLoading = true);
+    try {
+      await ApiService().postJson('/api/settings/llm', {
+        'provider': _provider,
+        'model': _model,
+        if (key.isNotEmpty) 'api_key': key,
+      });
+      _keyController.clear();
+      await _loadSettings();
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _clearKey() async {
+    setState(() => _isLoading = true);
+    try {
+      await ApiService().delete('/api/settings/llm');
+      await _loadSettings();
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(context, 'AI Models', 'Bring your own API key to use premium LLMs.'),
+        const SizedBox(height: 24),
+        DropdownButtonFormField<String>(
+          value: _provider,
+          dropdownColor: Theme.of(context).colorScheme.surface,
+          decoration: InputDecoration(
+            labelText: 'Provider',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'mistral', child: Text('Mistral')),
+            DropdownMenuItem(value: 'openai', child: Text('OpenAI')),
+            DropdownMenuItem(value: 'gemini', child: Text('Google Gemini')),
+            DropdownMenuItem(value: 'groq', child: Text('Groq')),
+            DropdownMenuItem(value: 'ollama', child: Text('Ollama (Local)')),
+          ],
+          onChanged: (v) => setState(() => _provider = v!),
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          initialValue: _model,
+          decoration: InputDecoration(
+            labelText: 'Model Name',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onChanged: (v) => _model = v,
+        ),
+        const SizedBox(height: 16),
+        TextFormField(
+          controller: _keyController,
+          obscureText: true,
+          decoration: InputDecoration(
+            labelText: 'API Key (Encrypted)',
+            hintText: _maskedKey ?? 'Enter API key here',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            suffixIcon: _maskedKey != null
+                ? IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: _clearKey,
+                    tooltip: 'Clear API Key',
+                  )
+                : null,
+          ),
+        ),
+        const SizedBox(height: 24),
+        ElevatedButton(
+          onPressed: _saveSettings,
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 48),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: const Text('Save Credentials'),
+        ),
+      ],
+    );
+  }
 }

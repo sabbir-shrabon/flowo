@@ -14,6 +14,7 @@ import '../../widgets/auth_modal.dart';
 import '../../widgets/chat_message_bubble.dart';
 import '../../widgets/assistant_status_pill.dart';
 import '../../widgets/guided_entry_panel.dart';
+import '../../widgets/app_settings_dialog.dart';
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -55,9 +56,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   // Track last loaded conversation to avoid double-loading
   String? _lastLoadedConvId;
 
+  String _llmProvider = 'mistral';
+
   @override
   void initState() {
     super.initState();
+    _loadLlmProvider();
     // Check for pending chat message on first build
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkPendingMessage();
@@ -90,6 +94,77 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         );
       }
     });
+  }
+
+  Future<void> _loadLlmProvider() async {
+    try {
+      final res = await ApiService().getJson('/api/settings/llm');
+      if (mounted) {
+        setState(() {
+          _llmProvider = res['provider'] ?? 'mistral';
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _updateLlmProvider(String provider) async {
+    try {
+      await ApiService().postJson('/api/settings/llm', {
+        'provider': provider,
+        'model': provider == 'openai' ? 'gpt-4o-mini' : (provider == 'gemini' ? 'gemini-2.0-flash' : 'mistral-small-latest'),
+      });
+      if (mounted) {
+        setState(() {
+          _llmProvider = provider;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Switched to ${provider.toUpperCase()}')));
+      }
+    } catch (e) {
+      if (mounted) showErrorSnackBar(context, e);
+    }
+  }
+
+  Widget _buildModelSelector() {
+    return PopupMenuButton<String>(
+      initialValue: _llmProvider,
+      tooltip: 'Select AI Model',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: context.colors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: context.colors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.smart_toy_outlined, size: 14, color: context.colors.textSecondary),
+            const SizedBox(width: 6),
+            Text(
+              _llmProvider.toUpperCase(),
+              style: TextStyle(fontSize: 12, color: context.colors.textSecondary, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.arrow_drop_down, size: 16, color: context.colors.textSecondary),
+          ],
+        ),
+      ),
+      onSelected: (val) {
+        if (val == 'settings') {
+          showAppSettingsDialog(context);
+        } else {
+          _updateLlmProvider(val);
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem(value: 'mistral', child: Text('Mistral', style: TextStyle(fontSize: 13))),
+        PopupMenuItem(value: 'openai', child: Text('OpenAI', style: TextStyle(fontSize: 13))),
+        PopupMenuItem(value: 'gemini', child: Text('Gemini', style: TextStyle(fontSize: 13))),
+        PopupMenuItem(value: 'groq', child: Text('Groq', style: TextStyle(fontSize: 13))),
+        PopupMenuItem(value: 'ollama', child: Text('Ollama', style: TextStyle(fontSize: 13))),
+        PopupMenuDivider(),
+        PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings, size: 16), SizedBox(width: 8), Text('API Keys...', style: TextStyle(fontSize: 13))])),
+      ],
+    );
   }
 
   Future<void> _sendMessage(String content, {String source = 'chat'}) async {
@@ -465,9 +540,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   vertical: 6,
                 ),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    if (_messages.isNotEmpty)
+                    _buildModelSelector(),
+                    Row(
+                      children: [
+                        if (_messages.isNotEmpty)
                       TextButton.icon(
                         onPressed: () {
                           setState(() {
