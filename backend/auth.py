@@ -10,12 +10,15 @@ Usage in any router:
 from __future__ import annotations
 
 from uuid import UUID
+import logging
 import os
 import time
 
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+logger = logging.getLogger(__name__)
 
 from backend.config import settings
 
@@ -78,9 +81,14 @@ def get_current_user(
         not settings.supabase_jwt_secret
         or settings.supabase_jwt_secret == "YOUR_JWT_SECRET_HERE"
     ):
+        logger.error(
+            "auth: SUPABASE_JWT_SECRET is not set or is a placeholder. "
+            "All authenticated requests will return 401. "
+            "Set SUPABASE_JWT_SECRET in your Render environment variables."
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="JWT verification is not configured.",
+            detail="Server misconfiguration: JWT secret not configured. Contact support.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -95,18 +103,21 @@ def get_current_user(
         _validate_token_expiry(payload)
         return UUID(payload["sub"])
     except jwt.ExpiredSignatureError:
+        logger.warning("auth: token expired for incoming request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired. Please log in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.InvalidTokenError as exc:
+        logger.error("auth: JWT validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {exc}",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except (KeyError, ValueError) as exc:
+        logger.error("auth: bad token payload: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token payload (missing or invalid 'sub'): {exc}",
