@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../models/daily_schedule_models.dart';
 import '../../models/plan_models.dart';
 import '../../models/task_models.dart';
@@ -25,7 +26,8 @@ class TodayScreen extends ConsumerStatefulWidget {
   ConsumerState<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends ConsumerState<TodayScreen> {
+class _TodayScreenState extends ConsumerState<TodayScreen>
+    with WidgetsBindingObserver {
   DailySchedule _schedule = DailySchedule.empty();
   List<TaskResponse> _tasks = [];
   bool _loading = true;
@@ -63,17 +65,38 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _todayScrollController = ScrollController();
     _fetchData();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _todayScrollController.dispose();
     _mobileChatHeightNotifier.dispose();
     _chatController.dispose();
     _chatScrollController.dispose();
     super.dispose();
+  }
+
+  /// Called by the OS when the app goes to background / comes back.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // The app just came back to the foreground. The token may have expired
+      // while the device was asleep. Refresh the session, then reload tasks.
+      _refreshSessionThenFetch();
+    }
+  }
+
+  Future<void> _refreshSessionThenFetch() async {
+    try {
+      await Supabase.instance.client.auth.refreshSession();
+    } catch (_) {
+      // Ignore — if refresh fails, _fetchData will surface the 401 gracefully.
+    }
+    if (mounted) _fetchData();
   }
 
   void _triggerTodayScroll(double diff) {
@@ -100,6 +123,20 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           _tasks = [];
           _loading = false;
           _viewingOffline = false;
+        });
+      }
+      return;
+    }
+
+    // Silently ensure the token is fresh before we hit the network.
+    // ensureValidSession() refreshes automatically if expiry < 5 minutes.
+    final sessionOk = await ref.read(authProvider.notifier).ensureValidSession();
+    if (!sessionOk) {
+      // Refresh token is gone — user truly needs to sign in again.
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Your session has expired. Please sign out and sign in again.';
         });
       }
       return;

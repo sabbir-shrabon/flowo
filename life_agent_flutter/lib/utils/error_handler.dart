@@ -95,8 +95,8 @@ bool isAuthError(Object error) {
   if (error is DioException) {
     return error.response?.statusCode == 401;
   }
-  return error.toString().contains('401') ||
-      error.toString().contains('JWT') ||
-      error.toString().contains('token') &&
-          error.toString().contains('expired');
+  final msg = error.toString();
+  return msg.contains('401') ||
+      msg.contains('JWT') ||
+      (msg.contains('token') && msg.contains('expired'));
 }
