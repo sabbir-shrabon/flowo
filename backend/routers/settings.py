@@ -50,7 +50,14 @@ def update_llm_settings(data: LLMSettingsUpdate, user_id: UUID = Depends(get_cur
             raise HTTPException(status_code=400, detail="Invalid API key for the selected provider.")
         encrypted_key = encrypt_key(data.api_key)
         if not encrypted_key:
-            raise HTTPException(status_code=500, detail="Encryption failed. Check server configuration.")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Server misconfiguration: ENCRYPTION_MASTER_KEY is not set. "
+                    "Generate a key with `python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"` "
+                    "and add it as an environment variable on your server."
+                ),
+            )
 
     update_payload = {
         "llm_provider": data.provider,

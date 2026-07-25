@@ -38,42 +38,77 @@ def get_client_for_user(user_id: UUID | str) -> dict:
     db_api_key = None
 
     if supabase:
-        _, data = supabase.table("users").select("llm_provider, llm_model, llm_api_key").eq("id", uid_str).execute()
-        if data:
-            row = data[0]
-            db_provider = row.get("llm_provider")
-            db_model = row.get("llm_model")
-            encrypted_key = row.get("llm_api_key")
-            if encrypted_key:
-                db_api_key = decrypt_key(encrypted_key)
+        try:
+            _, data = supabase.table("users").select("llm_provider, llm_model, llm_api_key").eq("id", uid_str).execute()
+            if data:
+                row = data[0]
+                db_provider = row.get("llm_provider")
+                db_model = row.get("llm_model")
+                encrypted_key = row.get("llm_api_key")
+                if encrypted_key:
+                    db_api_key = decrypt_key(encrypted_key)
+                    if db_api_key is None:
+                        # decrypt_key returns None when ENCRYPTION_MASTER_KEY is missing or wrong
+                        logger.error(
+                            "get_client_for_user: failed to decrypt DB key for user=%s. "
+                            "Check that ENCRYPTION_MASTER_KEY is set correctly on the server.",
+                            uid_str,
+                        )
+                else:
+                    logger.debug("get_client_for_user: no llm_api_key stored in DB for user=%s", uid_str)
+            else:
+                logger.debug("get_client_for_user: no users row found for user=%s", uid_str)
+        except Exception as exc:
+            logger.error("get_client_for_user: DB lookup failed for user=%s: %s", uid_str, exc)
+    else:
+        logger.warning("get_client_for_user: Supabase client not available; falling back to env vars")
 
-    # Fallbacks
-    provider = db_provider or settings.llm_provider
-    
-    if provider.lower() == "openai":
+    # Resolve provider (DB value beats env default)
+    provider = (db_provider or settings.llm_provider or "mistral").lower()
+
+    if provider == "openai":
         model = db_model or settings.openai_model
         api_key = db_api_key or settings.openai_api_key
-    elif provider.lower() == "gemini":
+    elif provider == "gemini":
         model = db_model or settings.gemini_model
         api_key = db_api_key or settings.gemini_api_key
-    elif provider.lower() == "ollama":
+    elif provider == "ollama":
         model = db_model or settings.ollama_model
         api_key = db_api_key or settings.ollama_base_url
-    elif provider.lower() == "groq":
+    elif provider == "groq":
         model = db_model or settings.groq_model
         api_key = db_api_key or settings.groq_api_key
+    elif provider == "mistral":
+        model = db_model or settings.mistral_model
+        api_key = db_api_key or settings.mistral_api_key
     else:
+        logger.warning("get_client_for_user: unknown provider '%s', defaulting to mistral", provider)
         provider = "mistral"
         model = db_model or settings.mistral_model
         api_key = db_api_key or settings.mistral_api_key
 
+    logger.debug(
+        "get_client_for_user: user=%s provider=%s model=%s key_source=%s",
+        uid_str, provider, model,
+        "db" if db_api_key else ("env" if api_key else "NONE"),
+    )
+
     client_config = {
-        "provider": provider.lower(),
+        "provider": provider,
         "model": model,
-        "api_key": api_key
+        "api_key": api_key,
     }
-    
-    _USER_CLIENT_CACHE[uid_str] = client_config
+
+    # Only cache when we have a valid key — if the key is missing we want to
+    # retry on the next request (e.g. after the user saves their key).
+    if api_key:
+        _USER_CLIENT_CACHE[uid_str] = client_config
+    else:
+        logger.warning(
+            "get_client_for_user: no API key resolved for user=%s provider=%s — not caching",
+            uid_str, provider,
+        )
+
     return client_config
 
 def validate_api_key(provider: str, model: str, api_key: str) -> bool:
@@ -123,7 +158,10 @@ def send_chat(user_id: UUID | str, messages: list[dict[str, Any]], system: str |
     api_key = client["api_key"]
 
     if not api_key and provider != "ollama":
-        raise LLMProviderError(f"API key missing for provider {provider}. Please update your settings.")
+        raise LLMProviderError(
+            f"No API key found for provider '{provider}'. "
+            "Please go to Settings → LLM and save your API key."
+        )
 
     final_messages = list(messages)
     if system:
