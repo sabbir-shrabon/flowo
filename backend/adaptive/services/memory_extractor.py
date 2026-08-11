@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.adaptive.db import AdaptiveStore
 from backend.adaptive.models import MemoryKey, MemoryRow
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 EXTRACTION_PROMPT = """You are a memory extraction engine. Analyze this conversation between a user and an AI planning assistant. Extract and return ONLY a JSON object with these fields:
@@ -31,9 +31,10 @@ RETRY_PROMPT = """You previously failed to return valid JSON. You MUST return ON
 Return the corrected JSON now."""
 
 
-def _call_llm(prompt: str) -> str:
+def _call_llm(prompt: str, user_id: str) -> str:
     """Synchronous LLM call wrapper."""
-    return chatResponse(prompt)
+    messages = [{"role": "user", "content": prompt}]
+    return send_chat(user_id, messages)
 
 
 def _clean_llm_response(raw: str) -> str:
@@ -67,7 +68,7 @@ async def extract_and_save(
     full_prompt = f"{EXTRACTION_PROMPT}\n\nConversation:\n{conv_text}"
 
     # First LLM call
-    raw = await asyncio.to_thread(_call_llm, full_prompt)
+    raw = await asyncio.to_thread(_call_llm, full_prompt, str(user_id))
     cleaned = _clean_llm_response(raw)
 
     try:
@@ -75,7 +76,7 @@ async def extract_and_save(
     except json.JSONDecodeError:
         # Retry once with stricter prompt
         retry_prompt = RETRY_PROMPT.format(previous_response=cleaned)
-        raw = await asyncio.to_thread(_call_llm, retry_prompt)
+        raw = await asyncio.to_thread(_call_llm, retry_prompt, str(user_id))
         cleaned = _clean_llm_response(raw)
         parsed = json.loads(cleaned)  # let this propagate if it still fails
 

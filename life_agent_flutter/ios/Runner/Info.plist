@@ -26,6 +26,8 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.lifeagent.life_agent_flutter</string>
+				<!-- Copied from GoogleService-Info.plist key REVERSED_CLIENT_ID -->
+				<string>YOUR_REVERSED_IOS_CLIENT_ID</string>
 			</array>
 		</dict>
 	</array>

@@ -17,14 +17,19 @@ class Settings(BaseSettings):
     supabase_jwt_secret: Optional[str] = Field(None, env="SUPABASE_JWT_SECRET")
     supabase_anon_key: Optional[str] = Field(None, env="SUPABASE_ANON_KEY")
 
-    dev_mode: bool = Field(True, env="DEV_MODE")
+    app_env: str = Field("development", env="APP_ENV")
+    dev_mode: bool = Field(False, env="DEV_MODE")
     encryption_master_key: Optional[str] = Field(None, env="ENCRYPTION_MASTER_KEY")
 
     # LLM Provider Configuration
-    llm_provider: str = Field("openai", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama'
+    managed_llm_model: str = Field("gpt-4o-mini", env="MANAGED_LLM_MODEL")
+    managed_llm_api_key: Optional[str] = Field(None, env="MANAGED_LLM_API_KEY")
+    llm_provider: str = Field("openai", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama', 'groq', 'mistral'
     
     openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     openai_model: str = Field("gpt-4o-mini", env="OPENAI_MODEL")
+    openai_base_url: Optional[str] = Field(None, env="OPENAI_BASE_URL")
+    openai_organization_id: Optional[str] = Field(None, env="OPENAI_ORGANIZATION_ID")
     
     gemini_api_key: Optional[str] = Field(None, env="GEMINI_API_KEY")
     gemini_model: str = Field("gemini-2.0-flash", env="GEMINI_MODEL")
@@ -37,7 +42,8 @@ class Settings(BaseSettings):
 
     mistral_api_key: Optional[str] = Field(None, env="MISTRAL_API_KEY")
     mistral_model: str = Field("mistral-small-latest", env="MISTRAL_MODEL")
-    mistral_agent_id: str = Field("ag_019d775d5d3c744fafefd4fbd5c99a66", env="MISTRAL_AGENT_ID")
+    mistral_agent_id: Optional[str] = Field(None, env="MISTRAL_AGENT_ID")
+    mistral_base_url: Optional[str] = Field(None, env="MISTRAL_BASE_URL")
 
     cors_origins_raw: str = Field(
         "",
@@ -58,6 +64,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
 
     @property
     def cors_origins(self) -> list[str]:

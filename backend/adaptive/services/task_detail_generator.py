@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 TASK_DETAIL_PROMPT = """You are a task detail generator. Given a task title, its parent plan context, and the user's memory (goals, preferences, constraints), generate rich detail to help the user understand and complete this task.
@@ -36,6 +36,7 @@ class TaskDetailGeneratorService:
 
     def generate_task_detail(
         self,
+        user_id: UUID | str,
         task_id: UUID,
         task_title: str,
         plan_context: str,
@@ -53,7 +54,8 @@ class TaskDetailGeneratorService:
         )
 
         try:
-            content = chatResponse(prompt, system=system)
+            messages = [{"role": "user", "content": prompt}]
+            content = send_chat(user_id, messages, system=system)
             content = content.strip()
             if content.startswith("```json"):
                 content = content[7:]

@@ -130,7 +130,16 @@ GoRouter _createRouter(Ref ref) {
           GoRoute(
             path: '/task-workspace',
             pageBuilder: (context, state) {
-              final extra = state.extra as Map<String, dynamic>;
+              final extra = state.extra as Map<String, dynamic>?;
+              if (extra == null || !extra.containsKey('task')) {
+                // Fallback if accessed directly without state (e.g. web refresh)
+                return slideFadeTransition(
+                  key: state.pageKey,
+                  child: const Scaffold(
+                    body: Center(child: Text('Task not found. Please navigate back.')),
+                  ),
+                );
+              }
               return slideFadeTransition(
                 key: state.pageKey,
                 child: TaskWorkspaceScreen(

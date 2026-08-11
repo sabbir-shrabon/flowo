@@ -97,7 +97,7 @@ from backend.adaptive.services.task_generator import generate_for_milestone
 from backend.adaptive.services.scheduler import scheduler_service
 from backend.adaptive.services.task_detail_generator import task_detail_generator_service
 from backend.adaptive.services.context_builder import build as build_context
-from backend.lib.llm import LLMProviderError, chatResponse
+from backend.lib.llm_client import send_chat, LLMProviderError
 
 router = APIRouter(prefix="/api/adaptive", tags=["adaptive"])
 
@@ -292,7 +292,7 @@ async def get_tasks_today(
     except Exception as e:
         import traceback
         logger.error(f"Error in get_tasks_today: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"get_tasks_today failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch today's tasks. Please try again later.")
 
 
 @router.get("/tasks/today/v2", response_model=list[TaskResponse])
@@ -312,7 +312,7 @@ async def get_tasks_today_v2(
     except Exception as e:
         import traceback
         logger.error(f"Error in get_tasks_today_v2: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"get_tasks_today_v2 failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch today's tasks. Please try again later.")
 
 
 @router.post("/tasks/update", response_model=TaskResponse)
@@ -460,7 +460,7 @@ async def _complete_task_status_flow(
     except Exception as e:
         import traceback
         logger.error(f"Error in update_task_status: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"update_task_status failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to update task status. Please try again later.")
 
 
 
@@ -510,7 +510,8 @@ async def generate_subtasks(
         existing_subtasks=", ".join(s.title for s in existing) or "None",
     )
     try:
-        parsed, raw = _try_parse_json(chatResponse(prompt))
+        messages = [{"role": "user", "content": prompt}]
+        parsed, raw = _try_parse_json(send_chat(str(user_id), messages))
     except LLMProviderError as exc:
         logger.warning("Subtask generation failed for task %s: %s", task.id, exc)
         raise HTTPException(status_code=503, detail="AI subtask generation is temporarily unavailable.")
@@ -650,6 +651,7 @@ async def get_task_detail(
         logger.warning("context_builder failed for task detail: %s", e)
 
     detail = task_detail_generator_service.generate_task_detail(
+        user_id=str(user_id),
         task_id=task.id,
         task_title=task.title,
         plan_context=plan_context,
@@ -1040,7 +1042,8 @@ async def generate_plan_from_answers(
     )
 
     try:
-        content = chatResponse(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        content = send_chat(str(user_id), messages)
         content = _strip_code_fences(content)
         parsed = _json.loads(content)
     except Exception as exc:
@@ -1178,7 +1181,8 @@ async def extract_fields_from_chat(
 
     extract_prompt = EXTRACT_WIZARD_FIELDS_PROMPT.format(user_messages=user_text)
     try:
-        content = chatResponse(extract_prompt)
+        messages = [{"role": "user", "content": extract_prompt}]
+        content = send_chat(str(user_id), messages)
         content = _strip_code_fences(content)
         fields = _json.loads(content)
     except Exception as exc:
@@ -1243,7 +1247,8 @@ async def generate_plan_from_chat(
     )
 
     try:
-        content = chatResponse(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        content = send_chat(str(user_id), messages)
         content = _strip_code_fences(content)
         parsed = _json.loads(content)
     except Exception as exc:
@@ -1734,7 +1739,8 @@ async def plan_chat(
     prompt = payload.message
 
     try:
-        content = chatResponse(prompt, system=full_system)
+        messages = [{"role": "user", "content": prompt}]
+        content = send_chat(str(user_id), messages, system=full_system)
     except Exception as exc:
         logger.exception("Plan chat LLM call failed")
         return PlanChatResponse(reply=f"Sorry, I couldn't process that: {exc}", actions=[])
@@ -1893,7 +1899,8 @@ async def today_chat(
     prompt = payload.message
 
     try:
-        content = chatResponse(prompt, system=full_system)
+        messages = [{"role": "user", "content": prompt}]
+        content = send_chat(str(user_id), messages, system=full_system)
     except Exception as exc:
         logger.exception("Today chat LLM call failed")
         return PlanChatResponse(reply=f"Sorry, I couldn't process that: {exc}", actions=[])
@@ -2170,14 +2177,16 @@ async def get_milestone_insight(
     content = ""
     parsed, raw = None, ""
     try:
-        content = chatResponse(prompt)
+        messages = [{"role": "user", "content": prompt}]
+        content = send_chat(str(user_id), messages)
         parsed, raw = _try_parse_json(content)
         if parsed is None:
             retry_prompt = (
                 "Return valid JSON only. Do not include any markdown, code fences, or extra text. "
                 "The response must be a single JSON object.\n\n" + prompt
             )
-            content2 = chatResponse(retry_prompt)
+            retry_messages = [{"role": "user", "content": retry_prompt}]
+            content2 = send_chat(str(user_id), retry_messages)
             parsed, raw = _try_parse_json(content2)
             content = content2
     except Exception as exc:

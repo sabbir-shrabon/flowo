@@ -25,7 +25,7 @@ from backend.adaptive.models import (
     TaskRow,
     TaskStatus,
 )
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +208,8 @@ class DeepReviewService:
         )
 
         try:
-            content = chatResponse(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            content = send_chat(str(user_id), messages)
             content = content.strip()
             if content.startswith("```json"):
                 content = content[7:]

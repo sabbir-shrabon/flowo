@@ -21,7 +21,7 @@ from uuid import UUID
 
 from backend.adaptive.db import adaptive_store
 from backend.adaptive.models import EventType, TaskRow, TaskStatus
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,8 @@ def generate_daily_summary(user_id: UUID, audit: dict, extra_lines: list[str]) -
         rescheduled=stats.get("rescheduled", 0), extra_context=extra,
     )
     try:
-        return chatResponse(prompt).strip()
+        messages = [{"role": "user", "content": prompt}]
+        return send_chat(str(user_id), messages).strip()
     except Exception as e:
         logger.warning("Summary LLM failed: %s", e)
         return ""

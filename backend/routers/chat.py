@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import traceback
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -348,8 +349,7 @@ async def chat_endpoint(
     except LLMProviderError as e:
         detail = str(e)
         logger.error("mistral_error=%s", detail)
-        raise HTTPException(status_code=500, detail=detail)
+        raise HTTPException(status_code=500, detail="Failed to process chat message. Please try again later.")
     except Exception as e:
-        detail = f"Chat failed: {str(e)}"
-        logger.error("chat_error=%s", detail)
-        raise HTTPException(status_code=500, detail=detail)
+        logger.error(f"Error in chat endpoint: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Failed to process chat message. Please try again later.")

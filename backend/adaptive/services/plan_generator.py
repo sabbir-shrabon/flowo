@@ -14,7 +14,7 @@ from backend.adaptive.models import (
     PlanPriority,
     TaskDifficulty,
 )
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 PLAN_GENERATION_PROMPT = """You are a planning engine. Given a user's goal, preferences, constraints, and difficulty level, create a milestone-structured plan.
@@ -82,7 +82,8 @@ class PlanGeneratorService:
         )
 
         try:
-            content = chatResponse(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            content = send_chat(str(user_id), messages)
             content = content.strip()
             if content.startswith("```json"):
                 content = content[7:]

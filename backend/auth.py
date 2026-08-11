@@ -26,6 +26,7 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 # Token blacklist for revoked sessions (in-memory, use Redis in production)
 _revoked_tokens: set[str] = set()
+logger.warning("Using in-memory token revocation. Revoked tokens will be lost on server restart.")
 
 
 def revoke_token(token: str) -> None:

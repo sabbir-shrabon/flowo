@@ -1,45 +1,79 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../config/env.dart';
 
 class AuthService {
   AuthService({SupabaseClient? supabaseClient})
     : _supabase = supabaseClient ?? Supabase.instance.client;
 
   final SupabaseClient _supabase;
-  static const _mobileGoogleRedirect = 'com.lifeagent.life_agent_flutter://login-callback/';
 
   Future<void> signInWithGoogle() async {
+    bool isSupported = false;
     if (kIsWeb) {
-      final redirectTo = Uri(
-        scheme: Uri.base.scheme,
-        host: Uri.base.host,
-        port: Uri.base.hasPort ? Uri.base.port : null,
-        path: Uri.base.path.isEmpty ? '/' : Uri.base.path,
-      ).toString();
-
-      await _supabase.auth.signInWithOAuth(
-        OAuthProvider.google,
-        redirectTo: redirectTo,
-      );
-      return;
+      isSupported = true;
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      isSupported = true;
     }
 
-    if (!Platform.isAndroid && !Platform.isIOS) {
+    if (!isSupported) {
       throw UnsupportedError(
         'Google sign-in is currently configured for Android, iOS, and Web only.',
       );
     }
 
-    await _supabase.auth.signInWithOAuth(
-      OAuthProvider.google,
-      redirectTo: _mobileGoogleRedirect,
-      authScreenLaunchMode: LaunchMode.externalApplication,
+    String? clientId;
+    String? serverClientId;
+
+    if (kIsWeb) {
+      clientId = Env.googleWebClientId;
+    } else {
+      clientId = Platform.isIOS ? Env.googleIosClientId : null;
+      serverClientId = Env.googleWebClientId;
+    }
+
+    final googleSignIn = GoogleSignIn(
+      clientId: clientId,
+      serverClientId: serverClientId,
+    );
+
+    final googleUser = await googleSignIn.signIn();
+    if (googleUser == null) {
+      // User canceled the sign-in
+      return;
+    }
+
+    final googleAuth = await googleUser.authentication;
+    final accessToken = googleAuth.accessToken;
+    final idToken = googleAuth.idToken;
+
+    if (idToken == null) {
+      throw StateError('Missing ID Token from Google Sign-In.');
+    }
+
+    await _supabase.auth.signInWithIdToken(
+      provider: OAuthProvider.google,
+      idToken: idToken,
+      accessToken: accessToken,
     );
   }
 
   Future<void> signOutGoogle() async {
+    bool isSupported = false;
+    if (kIsWeb) {
+      isSupported = true;
+    } else if (Platform.isAndroid || Platform.isIOS) {
+      isSupported = true;
+    }
+
+    if (isSupported) {
+      final googleSignIn = GoogleSignIn();
+      await googleSignIn.signOut();
+    }
     await _supabase.auth.signOut();
   }
 }

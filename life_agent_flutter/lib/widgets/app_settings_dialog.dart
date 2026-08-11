@@ -1069,6 +1069,336 @@ class _LogoutPane extends ConsumerWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// LLM MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _LlmPane extends StatefulWidget {
+  const _LlmPane();
+  @override
+  State<_LlmPane> createState() => _LlmPaneState();
+}
+
+class _LlmPaneState extends State<_LlmPane> {
+  bool _isLoading = true;
+  String _provider = 'mistral';
+  String _model = 'mistral-small-latest';
+  String? _maskedKey;
+  String? _baseUrl;
+  String? _agentId;
+  String? _organizationId;
+  bool _useManagedKey = true;
+  bool _fallbackToManaged = true;
+  
+  Map<String, dynamic> _registry = {};
+  
+  final _keyController = TextEditingController();
+  final _baseUrlController = TextEditingController();
+  final _agentIdController = TextEditingController();
+  final _organizationIdController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final regRes = await ApiService().getJson('/api/settings/llm/providers');
+      final res = await ApiService().getJson('/api/settings/llm');
+      if (mounted) {
+        setState(() {
+          _registry = Map<String, dynamic>.from(regRes);
+          _provider = res['provider'] ?? 'mistral';
+          _model = res['model'] ?? 'mistral-small-latest';
+          _maskedKey = res['api_key'];
+          _baseUrl = res['base_url'];
+          _agentId = res['agent_id'];
+          _organizationId = res['organization_id'];
+          _useManagedKey = res['use_managed_key'] ?? true;
+          _fallbackToManaged = res['fallback_to_managed'] ?? true;
+          
+          _baseUrlController.text = _baseUrl ?? '';
+          _agentIdController.text = _agentId ?? '';
+          _organizationIdController.text = _organizationId ?? '';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    final key = _keyController.text.trim();
+    final baseUrl = _baseUrlController.text.trim();
+    final agentId = _agentIdController.text.trim();
+    final orgId = _organizationIdController.text.trim();
+    
+    setState(() => _isLoading = true);
+    try {
+      await ApiService().postJson('/api/settings/llm', {
+        'provider': _provider,
+        'model': _model,
+        if (key.isNotEmpty) 'api_key': key,
+        if (baseUrl.isNotEmpty) 'base_url': baseUrl,
+        if (agentId.isNotEmpty) 'agent_id': agentId,
+        if (orgId.isNotEmpty) 'organization_id': orgId,
+        'use_managed_key': _useManagedKey,
+        'fallback_to_managed': _fallbackToManaged,
+      });
+      _keyController.clear();
+      await _loadSettings();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Settings saved successfully.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save settings: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearKey() async {
+    setState(() => _isLoading = true);
+    try {
+      await ApiService().delete('/api/settings/llm');
+      await _loadSettings();
+    } catch (e) {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _testConnection() async {
+    final key = _keyController.text.trim();
+    final baseUrl = _baseUrlController.text.trim();
+    final agentId = _agentIdController.text.trim();
+    final orgId = _organizationIdController.text.trim();
+    
+    setState(() => _isLoading = true);
+    try {
+      final res = await ApiService().postJson('/api/settings/llm/test', {
+        'provider': _provider,
+        'model': _model,
+        if (key.isNotEmpty) 'api_key': key,
+        if (baseUrl.isNotEmpty) 'base_url': baseUrl,
+        if (agentId.isNotEmpty) 'agent_id': agentId,
+        if (orgId.isNotEmpty) 'organization_id': orgId,
+        'use_managed_key': _useManagedKey,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(res['message'] ?? 'Connection successful!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Connection failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  List<Widget> _renderDynamicFields() {
+    if (_provider.isEmpty || !_registry.containsKey(_provider)) return [];
+    
+    final provInfo = _registry[_provider] as Map<String, dynamic>;
+    final reqFields = List<String>.from(provInfo['required_fields'] ?? []);
+    final optFields = List<String>.from(provInfo['optional_fields'] ?? []);
+    final allFields = [...reqFields, ...optFields];
+    
+    // We already handled 'model' explicitly, so exclude it
+    allFields.remove('model');
+    
+    List<Widget> widgets = [];
+    
+    for (final field in allFields) {
+      if (field == 'api_key') {
+        widgets.add(
+          TextFormField(
+            controller: _keyController,
+            obscureText: true,
+            decoration: InputDecoration(
+              labelText: 'API Key (Encrypted)',
+              hintText: _maskedKey ?? 'Enter API key here',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              suffixIcon: _maskedKey != null
+                  ? IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      onPressed: _clearKey,
+                      tooltip: 'Clear API Key',
+                    )
+                  : null,
+            ),
+          ),
+        );
+      } else if (field == 'base_url') {
+        final isReq = reqFields.contains('base_url');
+        widgets.add(
+          TextFormField(
+            controller: _baseUrlController,
+            decoration: InputDecoration(
+              labelText: 'Base URL ${isReq ? '' : '(Optional)'}',
+              hintText: provInfo['base_url'] as String? ?? 'Enter base url',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        );
+      } else if (field == 'agent_id') {
+        widgets.add(
+          TextFormField(
+            controller: _agentIdController,
+            decoration: InputDecoration(
+              labelText: 'Agent ID (Optional)',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        );
+      } else if (field == 'organization_id') {
+        widgets.add(
+          TextFormField(
+            controller: _organizationIdController,
+            decoration: InputDecoration(
+              labelText: 'Organization ID (Optional)',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        );
+      }
+      widgets.add(const SizedBox(height: 16));
+    }
+    return widgets;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle(context, 'AI Models', 'Choose between Flowo\'s managed AI or bring your own API key.'),
+        const SizedBox(height: 24),
+        
+        // AI Provider Toggle
+        SegmentedButton<bool>(
+          segments: const [
+            ButtonSegment<bool>(
+              value: true,
+              label: Text('Flowo Managed (Default)'),
+              icon: Icon(Icons.cloud_done),
+            ),
+            ButtonSegment<bool>(
+              value: false,
+              label: Text('Own API Key (BYOK)'),
+              icon: Icon(Icons.vpn_key),
+            ),
+          ],
+          selected: {_useManagedKey},
+          onSelectionChanged: (Set<bool> newSelection) {
+            setState(() {
+              _useManagedKey = newSelection.first;
+            });
+          },
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 13)),
+          ),
+        ),
+        
+        const SizedBox(height: 24),
+
+        if (!_useManagedKey) ...[
+          DropdownButtonFormField<String>(
+            initialValue: _provider,
+            dropdownColor: Theme.of(context).colorScheme.surface,
+            decoration: InputDecoration(
+              labelText: 'Provider',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            items: _registry.isEmpty 
+              ? [DropdownMenuItem(value: _provider, child: Text(_provider))]
+              : _registry.keys.map((k) {
+                final label = _registry[k]['label'] as String? ?? k;
+                return DropdownMenuItem(value: k, child: Text(label));
+              }).toList(),
+            onChanged: (v) {
+              if (v != null) {
+                setState(() {
+                  _provider = v;
+                  if (_registry.containsKey(v)) {
+                    _model = _registry[v]['default_model'] as String? ?? '';
+                  }
+                });
+              }
+            },
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            key: ValueKey('$_provider-model'),
+            initialValue: _model,
+            decoration: InputDecoration(
+              labelText: 'Model Name',
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            onChanged: (v) => _model = v,
+          ),
+          const SizedBox(height: 16),
+          ..._renderDynamicFields(),
+          SwitchListTile(
+            title: const Text('Fallback to Flowo managed key on failure', style: TextStyle(fontSize: 14)),
+            subtitle: const Text('Automatically uses the managed key if your key hits limits (429) or expires (401).', style: TextStyle(fontSize: 12)),
+            value: _fallbackToManaged,
+            onChanged: (bool value) {
+              setState(() {
+                _fallbackToManaged = value;
+              });
+            },
+            contentPadding: EdgeInsets.zero,
+            activeColor: context.colors.accent,
+          ),
+          const SizedBox(height: 24),
+        ],
+
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: _testConnection,
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Test Connection'),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: _saveSettings,
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Save Credentials'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1090,7 +1420,7 @@ Widget _sectionTitle(BuildContext context, String title, String subtitle) {
         style: TextStyle(
           color: context.colors.textSecondary,
           fontSize: 13,
-          height: 1.35,
+          height: 1.4,
         ),
       ),
     ],
@@ -1108,151 +1438,22 @@ Widget _infoRow(BuildContext context, String label, String value) {
         Expanded(
           child: Text(
             label,
-            style: TextStyle(color: context.colors.textSecondary, fontSize: 14),
+            style: TextStyle(
+              color: context.colors.textSecondary,
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              color: context.colors.textPrimary,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+        Text(
+          value,
+          style: TextStyle(
+            color: context.colors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
     ),
   );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LLM MODELS
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _LlmPane extends StatefulWidget {
-  const _LlmPane();
-  @override
-  State<_LlmPane> createState() => _LlmPaneState();
-}
-
-class _LlmPaneState extends State<_LlmPane> {
-  bool _isLoading = true;
-  String _provider = 'mistral';
-  String _model = 'mistral-small-latest';
-  String? _maskedKey;
-  final _keyController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
-  }
-
-  Future<void> _loadSettings() async {
-    try {
-      final res = await ApiService().getJson('/api/settings/llm');
-      if (mounted) {
-        setState(() {
-          _provider = res['provider'] ?? 'mistral';
-          _model = res['model'] ?? 'mistral-small-latest';
-          _maskedKey = res['api_key'];
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _saveSettings() async {
-    final key = _keyController.text.trim();
-    setState(() => _isLoading = true);
-    try {
-      await ApiService().postJson('/api/settings/llm', {
-        'provider': _provider,
-        'model': _model,
-        if (key.isNotEmpty) 'api_key': key,
-      });
-      _keyController.clear();
-      await _loadSettings();
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _clearKey() async {
-    setState(() => _isLoading = true);
-    try {
-      await ApiService().delete('/api/settings/llm');
-      await _loadSettings();
-    } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading) return const Center(child: CircularProgressIndicator());
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _sectionTitle(context, 'AI Models', 'Bring your own API key to use premium LLMs.'),
-        const SizedBox(height: 24),
-        DropdownButtonFormField<String>(
-          initialValue: _provider,
-          dropdownColor: Theme.of(context).colorScheme.surface,
-          decoration: InputDecoration(
-            labelText: 'Provider',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          items: const [
-            DropdownMenuItem(value: 'mistral', child: Text('Mistral')),
-            DropdownMenuItem(value: 'openai', child: Text('OpenAI')),
-            DropdownMenuItem(value: 'gemini', child: Text('Google Gemini')),
-            DropdownMenuItem(value: 'groq', child: Text('Groq')),
-            DropdownMenuItem(value: 'ollama', child: Text('Ollama (Local)')),
-          ],
-          onChanged: (v) => setState(() => _provider = v!),
-        ),
-        const SizedBox(height: 16),
-        TextFormField(
-          initialValue: _model,
-          decoration: InputDecoration(
-            labelText: 'Model Name',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          onChanged: (v) => _model = v,
-        ),
-        const SizedBox(height: 16),
-        TextFormField(
-          controller: _keyController,
-          obscureText: true,
-          decoration: InputDecoration(
-            labelText: 'API Key (Encrypted)',
-            hintText: _maskedKey ?? 'Enter API key here',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            suffixIcon: _maskedKey != null
-                ? IconButton(
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: _clearKey,
-                    tooltip: 'Clear API Key',
-                  )
-                : null,
-          ),
-        ),
-        const SizedBox(height: 24),
-        ElevatedButton(
-          onPressed: _saveSettings,
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 48),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-          child: const Text('Save Credentials'),
-        ),
-      ],
-    );
-  }
 }

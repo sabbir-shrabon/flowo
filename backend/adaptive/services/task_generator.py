@@ -10,7 +10,7 @@ from uuid import UUID
 from backend.adaptive.db import AdaptiveStore
 from backend.adaptive.models import MilestoneRow, TaskRow
 from backend.adaptive.services.milestone_generator import PlanGenerationError
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 TASK_PROMPT = """You are a planning expert. Create daily tasks for this milestone.
@@ -107,8 +107,9 @@ def _date_for_day_offset(start: date, day_offset: int, working_set: set[int]) ->
 
 # ── LLM helpers ──────────────────────────────────────────────────────────────
 
-def _call_llm(prompt: str) -> str:
-    return chatResponse(prompt)
+def _call_llm(prompt: str, user_id: str) -> str:
+    messages = [{"role": "user", "content": prompt}]
+    return send_chat(user_id, messages)
 
 
 def _clean_llm_response(raw: str) -> str:
@@ -122,8 +123,8 @@ def _clean_llm_response(raw: str) -> str:
     return content.strip()
 
 
-def _parse_json_with_retry(raw_prompt: str) -> dict:
-    raw = _call_llm(raw_prompt)
+def _parse_json_with_retry(raw_prompt: str, user_id: str) -> dict:
+    raw = _call_llm(raw_prompt, user_id)
     cleaned = _clean_llm_response(raw)
 
     try:
@@ -132,7 +133,7 @@ def _parse_json_with_retry(raw_prompt: str) -> dict:
         pass
 
     retry_prompt = RETRY_PROMPT.format(previous_response=cleaned)
-    raw = _call_llm(retry_prompt)
+    raw = _call_llm(retry_prompt, user_id)
     cleaned = _clean_llm_response(raw)
 
     try:
@@ -217,7 +218,7 @@ async def generate_for_milestone(
     )
 
     # Call LLM
-    parsed = await asyncio.to_thread(_parse_json_with_retry, prompt)
+    parsed = await asyncio.to_thread(_parse_json_with_retry, prompt, str(uid))
 
     # Validate response
     tasks_data = parsed.get("tasks", [])

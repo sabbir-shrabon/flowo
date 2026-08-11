@@ -36,8 +36,13 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
+import logging
+logger = logging.getLogger(__name__)
+
 if limiter and RateLimitExceeded and _rate_limit_exceeded_handler:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+else:
+    logger.warning("slowapi is not installed. Rate limiting is DISABLED.")
 
 
 @app.middleware("http")
@@ -47,7 +52,8 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    # Allow the flutter web app to run on the same domain if needed, or loosen CSP for API
+    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: http: data: blob:;"
     return response
 
 

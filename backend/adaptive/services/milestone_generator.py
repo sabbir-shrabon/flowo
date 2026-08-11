@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.adaptive.db import AdaptiveStore
 from backend.adaptive.models import MilestoneRow, MilestoneStatus, PlanStatus
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 MILESTONE_PROMPT = """You are a planning expert. Create a milestone-based roadmap.
@@ -59,9 +59,10 @@ class PlanGenerationError(Exception):
         self.raw_response = raw_response
 
 
-def _call_llm(prompt: str) -> str:
+def _call_llm(prompt: str, user_id: str) -> str:
     """Synchronous LLM call wrapper."""
-    return chatResponse(prompt)
+    messages = [{"role": "user", "content": prompt}]
+    return send_chat(user_id, messages)
 
 
 def _clean_llm_response(raw: str) -> str:
@@ -76,9 +77,9 @@ def _clean_llm_response(raw: str) -> str:
     return content.strip()
 
 
-def _parse_json_with_retry(raw_prompt: str) -> dict:
+def _parse_json_with_retry(raw_prompt: str, user_id: str) -> dict:
     """Call LLM, parse JSON, retry once on failure. Returns parsed dict or raises PlanGenerationError."""
-    raw = _call_llm(raw_prompt)
+    raw = _call_llm(raw_prompt, user_id)
     cleaned = _clean_llm_response(raw)
 
     try:
@@ -88,7 +89,7 @@ def _parse_json_with_retry(raw_prompt: str) -> dict:
 
     # Retry once with stricter prompt
     retry_prompt = RETRY_PROMPT.format(previous_response=cleaned)
-    raw = _call_llm(retry_prompt)
+    raw = _call_llm(retry_prompt, user_id)
     cleaned = _clean_llm_response(raw)
 
     try:
@@ -167,7 +168,7 @@ async def generate(
     )
 
     # Call LLM (async wrapper around sync call)
-    parsed = await asyncio.to_thread(_parse_json_with_retry, prompt)
+    parsed = await asyncio.to_thread(_parse_json_with_retry, prompt, str(uid))
 
     # Validate response structure
     milestones_data = parsed.get("milestones", [])

@@ -102,7 +102,6 @@ class AuthNotifier extends StateNotifier<AppAuthState> {
     // fresh state for next user. This must be sequential.
     await LocalCacheService.instance.clearAll();
     await _authService.signOutGoogle();
-    await _supabase.auth.signOut();
   }
 
   Future<String?> getToken() async {

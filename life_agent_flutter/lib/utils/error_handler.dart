@@ -9,9 +9,9 @@ String friendlyErrorMessage(Object error) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        return 'Connection timed out. Please check your internet and try again.';
+        return 'Connection timed out. Please try again later.';
       case DioExceptionType.connectionError:
-        return 'No internet connection. Please check your network settings.';
+        return 'Could not connect to the server. Please check if the server is running.';
       case DioExceptionType.badResponse:
         final status = error.response?.statusCode;
         if (status == 401) return 'Session expired. Please sign in again.';

@@ -101,10 +101,6 @@ class _AuthModalDialogState extends ConsumerState<_AuthModalDialog> {
     try {
       await ref.read(authProvider.notifier).signInWithGoogle();
       if (mounted) {
-        if (kIsWeb) {
-          setState(() => _error = 'Redirecting to Google sign-in...');
-          return;
-        }
         Navigator.of(context).pop(true);
         context.go('/today');
       }

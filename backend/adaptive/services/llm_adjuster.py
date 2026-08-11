@@ -8,7 +8,7 @@ from uuid import UUID
 
 from backend.adaptive.db import adaptive_store
 from backend.adaptive.models import AdjustmentStatus, TaskStatus
-from backend.lib.llm import chatResponse
+from backend.lib.llm_client import send_chat
 
 
 class LLMAdjusterService:
@@ -49,7 +49,8 @@ class LLMAdjusterService:
         )
 
         try:
-            content = chatResponse(prompt)
+            messages = [{"role": "user", "content": prompt}]
+            content = send_chat(str(plan.user_id), messages)
             content = content.strip()
             if content.startswith("```json"):
                 content = content[7:]
