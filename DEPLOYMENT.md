@@ -24,21 +24,15 @@ Environment variables you will need to add in Render:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_JWT_SECRET`
 - `SUPABASE_ANON_KEY`
-- `FRONTEND_URL`
 - `LLM_PROVIDER`
 - Provider-specific keys you actually use, such as `OPENAI_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`, or `GROQ_API_KEY`
 
-Recommended `FRONTEND_URL` value:
-
-```text
-https://YOUR_SITE.netlify.app
-```
+*(Note: `FRONTEND_URL` or `CORS_ORIGINS` are only required if you use a custom domain. Netlify and Vercel `.app` domains are automatically allowed by the default CORS regex).*
 
 Notes:
 
 - The backend package lives in `backend/`, so the start command must be `uvicorn backend.main:app`.
 - Render free tier sleeps after inactivity.
-- `CORS_ORIGINS` is still supported for comma-separated extra origins, but `FRONTEND_URL` is the easiest setting for the deployed Netlify URL. The default `CORS_ORIGIN_REGEX` also allows Netlify preview and production domains.
 
 ## 2. Flutter web production build
 
