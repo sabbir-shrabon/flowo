@@ -86,17 +86,19 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
   }
 
   void _navigateAndClose(String location) {
+    final router = GoRouter.of(context);
     if (!widget.isPermanent) {
       Navigator.pop(context);
     }
-    context.go(location);
+    router.go(location);
   }
 
   void _openHistoryScreen() {
+    final router = GoRouter.of(context);
     if (!widget.isPermanent) {
       Navigator.pop(context);
     }
-    context.push('/history');
+    router.push('/history');
   }
 
   // ── Plan helpers ──────────────────────────────────────────────────────────
@@ -104,10 +106,11 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
   void _handlePlanTap(String planId) {
     if (_contextMenuPlanId != null) return;
     _closeContextMenus();
+    final router = GoRouter.of(context);
     if (!widget.isPermanent) {
       Navigator.pop(context);
     }
-    context.push('/plans/$planId');
+    router.push('/plans/$planId');
   }
 
   Future<void> _submitRenamePlan(String planId) async {
@@ -457,10 +460,11 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                         onTap: () {
                           ref.read(conversationToLoadProvider.notifier).state =
                               null;
+                          final router = GoRouter.of(context);
                           if (!widget.isPermanent) {
                             Navigator.pop(context);
                           }
-                          context.go('/chat');
+                          router.go('/chat');
                         },
                       ),
                     ],

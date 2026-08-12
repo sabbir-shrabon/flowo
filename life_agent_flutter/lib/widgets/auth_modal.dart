@@ -79,9 +79,10 @@ class _AuthModalDialogState extends ConsumerState<_AuthModalDialog> {
         await auth.signIn(email, password);
       }
       if (mounted) {
+        final router = GoRouter.of(context);
         Navigator.of(context).pop(true);
         // Navigate to today screen after successful sign-in
-        context.go('/today');
+        router.go('/today');
       }
     } catch (e) {
       if (mounted) {
@@ -101,8 +102,9 @@ class _AuthModalDialogState extends ConsumerState<_AuthModalDialog> {
     try {
       await ref.read(authProvider.notifier).signInWithGoogle();
       if (mounted) {
+        final router = GoRouter.of(context);
         Navigator.of(context).pop(true);
-        context.go('/today');
+        router.go('/today');
       }
     } catch (e) {
       if (mounted) {

@@ -1042,10 +1042,11 @@ class _LogoutPane extends ConsumerWidget {
           width: double.infinity,
           child: FilledButton.icon(
             onPressed: () {
+              final router = GoRouter.of(context);
               Navigator.of(context).pop();
               ref.read(authProvider.notifier).signOut();
               // Navigate to today screen after sign-out
-              context.go('/today');
+              router.go('/today');
             },
             icon: const Icon(Icons.logout, size: 18),
             label: const Text('Sign out'),
