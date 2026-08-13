@@ -1,5 +1,11 @@
 {
   "buildCommand": "cd life_agent_flutter && chmod +x vercel_build.sh && ./vercel_build.sh",
   "outputDirectory": "life_agent_flutter/build/web",
-  "framework": null
+  "framework": null,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }

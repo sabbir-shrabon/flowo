@@ -71,11 +71,11 @@ Recommended settings for the prebuilt-output workflow:
 For Vercel:
 
 - Import the same GitHub repository into Vercel
+- The root `vercel.json` configures the build automatically using `life_agent_flutter/vercel_build.sh`
 - Framework preset: `Other`
-- Root directory: `life_agent_flutter/build/web`
-- Build command: leave blank
-- Output directory: `.`
-
+- Add these Vercel environment variables before deploying:
+  `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `API_BASE_URL`, `GOOGLE_WEB_CLIENT_ID`
+- Set `API_BASE_URL` to your Render backend URL, for example: `https://YOUR-RENDER-SERVICE.onrender.com`
 For Netlify:
 
 - Publish directory: `life_agent_flutter/build/web`
@@ -90,11 +90,14 @@ If Netlify builds from Git, it must receive those values as environment variable
 
 Each frontend update flow:
 
+**For Vercel:**
+- Vercel automatically builds from source whenever you push to GitHub. You don't need to build locally.
+
+**For Netlify (if using prebuilt-output):**
 1. Rebuild Flutter web locally with the correct `--dart-define` values
 2. Commit the updated `life_agent_flutter/build/web` files
 3. Push to GitHub
-4. Vercel or Netlify redeploys automatically
-
+4. Netlify redeploys automatically
 ## 4. OAuth updates for production
 
 You must also update external dashboards manually:

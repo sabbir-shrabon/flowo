@@ -313,7 +313,7 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                 ),
                 child: const Center(
                   child: Text(
-                    'AI',
+                    'F',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 14,
@@ -328,7 +328,7 @@ class _AppDrawerState extends ConsumerState<AppDrawer> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Life Agent',
+                      'Flowooo',
                       style: TextStyle(
                         color: context.colors.textPrimary,
                         fontSize: 16,
