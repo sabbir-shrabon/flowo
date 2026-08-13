@@ -31,27 +31,22 @@ def get_llm_settings(user_id: UUID = Depends(get_current_user)) -> dict[str, Any
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
     
-    _, data = supabase.table("users").select("llm_provider, llm_model, llm_api_key, use_managed_key, fallback_to_managed, llm_base_url, llm_agent_id, llm_organization_id").eq("id", str(user_id)).execute()
-    if not data:
-        return {"provider": "mistral", "model": "mistral-small-latest", "api_key": None, "use_managed_key": True, "fallback_to_managed": True, "base_url": None, "agent_id": None, "organization_id": None}
+    _, data = supabase.table("users").select("llm_api_key").eq("id", str(user_id)).execute()
+    raw_key = data[0].get("llm_api_key") if data else None
     
-    user_row = data[0]
-    provider = user_row.get("llm_provider") or "mistral"
-    model = user_row.get("llm_model") or "mistral-small-latest"
-    raw_key = user_row.get("llm_api_key")
-    use_managed_key = user_row.get("use_managed_key") if user_row.get("use_managed_key") is not None else True
-    fallback_to_managed = user_row.get("fallback_to_managed") if user_row.get("fallback_to_managed") is not None else True
+    from backend.lib.llm_client import get_client_for_user
+    client = get_client_for_user(user_id)
     
     # We never return the decrypted key. We return a masked string if they have one.
     return {
-        "provider": provider,
-        "model": model,
+        "provider": client["provider"],
+        "model": client["model"],
         "api_key": mask_key(raw_key) if raw_key else None,
-        "base_url": user_row.get("llm_base_url"),
-        "agent_id": user_row.get("llm_agent_id"),
-        "organization_id": user_row.get("llm_organization_id"),
-        "use_managed_key": use_managed_key,
-        "fallback_to_managed": fallback_to_managed
+        "base_url": client.get("base_url"),
+        "agent_id": client.get("agent_id"),
+        "organization_id": client.get("organization_id"),
+        "use_managed_key": client.get("use_managed_key", True),
+        "fallback_to_managed": client.get("fallback_to_managed", True)
     }
 
 @router.post("/llm")

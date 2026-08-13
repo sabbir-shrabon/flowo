@@ -1041,10 +1041,10 @@ class _LogoutPane extends ConsumerWidget {
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-            onPressed: () {
+            onPressed: () async {
               final router = GoRouter.of(context);
               Navigator.of(context).pop();
-              ref.read(authProvider.notifier).signOut();
+              await ref.read(authProvider.notifier).signOut();
               // Navigate to today screen after sign-out
               router.go('/today');
             },

@@ -71,8 +71,25 @@ class AuthService {
     }
 
     if (isSupported) {
-      final googleSignIn = GoogleSignIn();
-      await googleSignIn.signOut();
+      try {
+        String? clientId;
+        String? serverClientId;
+
+        if (kIsWeb) {
+          clientId = Env.googleWebClientId;
+        } else {
+          clientId = Platform.isIOS ? Env.googleIosClientId : null;
+          serverClientId = Env.googleWebClientId;
+        }
+
+        final googleSignIn = GoogleSignIn(
+          clientId: clientId,
+          serverClientId: serverClientId,
+        );
+        await googleSignIn.signOut();
+      } catch (e) {
+        debugPrint('Google Sign-Out failed: $e');
+      }
     }
     await _supabase.auth.signOut();
   }

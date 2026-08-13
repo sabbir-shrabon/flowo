@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     managed_llm_model: str = Field("gpt-4o-mini", env="MANAGED_LLM_MODEL")
     managed_llm_api_key: Optional[str] = Field(None, env="MANAGED_LLM_API_KEY")
-    llm_provider: str = Field("openai", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama', 'groq', 'mistral'
+    llm_provider: str = Field("mistral", env="LLM_PROVIDER") # 'openai', 'gemini', 'ollama', 'groq', 'mistral'
     
     openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     openai_model: str = Field("gpt-4o-mini", env="OPENAI_MODEL")

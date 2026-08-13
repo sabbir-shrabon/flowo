@@ -937,6 +937,14 @@ class _TodayScreenState extends ConsumerState<TodayScreen>
             _loading = false;
             _error = null;
             _viewingOffline = false;
+            _chatMessages = [];
+            _chatController.clear();
+            _chatExpanded = false;
+            _selectedTaskDetail = null;
+            _selectedTaskId = null;
+            _selectedTaskTitle = null;
+            _actingTaskId = null;
+            _showCompletion = false;
           });
         }
         return;
