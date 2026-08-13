@@ -277,7 +277,9 @@ def send_chat(user_id: UUID | str, messages: list[dict[str, Any]], system: str |
             except Exception as e:
                 if fallback_to_managed and ("401" in str(e) or "429" in str(e) or "403" in str(e)):
                     logger.warning(f"Mistral BYOK failed, falling back to managed key. Error: {e}")
-                    return _call_managed()
+                    managed_resp = _call_managed()
+                    if managed_resp is not None:
+                        return managed_resp
                 raise LLMProviderError(f"Mistral call failed: {str(e)}")
 
         elif provider == "gemini":
@@ -304,7 +306,9 @@ def send_chat(user_id: UUID | str, messages: list[dict[str, Any]], system: str |
     except requests.exceptions.HTTPError as e:
         if fallback_to_managed and e.response is not None and e.response.status_code in [401, 403, 429]:
             logger.warning(f"BYOK failed with {e.response.status_code}, falling back to managed key.")
-            return _call_managed()
+            managed_resp = _call_managed()
+            if managed_resp is not None:
+                return managed_resp
         raise LLMProviderError(f"{provider.capitalize()} call failed: {str(e)}")
     except Exception as e:
         raise LLMProviderError(f"{provider.capitalize()} call failed: {str(e)}")
